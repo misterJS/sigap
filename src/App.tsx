@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { supabase, isSupabaseConfigured } from "./lib/supabaseClient"; // Sesuaikan path jika berbeda!
 
 /* =========================
     Types & Constants
@@ -235,6 +236,7 @@ function App() {
   const [formData, setFormData] = useState<KtpData>(emptyData);
   const [notes, setNotes] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // State baru untuk proses simpan
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [ocrProgress, setOcrProgress] = useState(0);
@@ -263,7 +265,7 @@ function App() {
 
   useEffect(() => {
     if (!saveFeedback) return;
-    const timeoutId = window.setTimeout(() => setSaveFeedback(null), 3000);
+    const timeoutId = window.setTimeout(() => setSaveFeedback(null), 5000); // Durasi feedback diperpanjang
     return () => window.clearTimeout(timeoutId);
   }, [saveFeedback]);
 
@@ -293,6 +295,7 @@ function App() {
       canvas.height = targetHeight;
       const context = canvas.getContext("2d");
       if (!context) {
+        // @ts-ignore
         bitmap.close();
         return imageFile;
       }
@@ -300,6 +303,7 @@ function App() {
       context.imageSmoothingEnabled = true;
       context.imageSmoothingQuality = "high";
       context.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      // @ts-ignore
       bitmap.close();
 
       const imageData = context.getImageData(0, 0, targetWidth, targetHeight);
@@ -473,25 +477,76 @@ function App() {
     setFormData((prev) => ({ ...prev, alamat: value }));
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSaveFeedback("Data KTP tersimpan sebagai draft.");
-    const now = new Date();
-    setLastSavedAt(
-      now.toLocaleString("id-ID", {
-        day: "2-digit",
-        month: "long",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    );
+    setIsSaving(true);
+    setSaveFeedback(null);
 
-    console.table({
-      ...formData,
-      catatan: notes,
-      sumber: fileName,
-      ocr: rawOcrText,
+    const now = new Date();
+    const formattedDate = now.toLocaleString("id-ID", {
+      day: "2-digit",
+      month: "long",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
     });
+
+    try {
+      if (isSupabaseConfigured) {
+        // Objek data yang DIPETAKAN ke nama kolom di tabel ktp_submissions
+        const dataToSave = {
+          // Kolom dari KtpData
+          nik: formData.nik,
+          nama: formData.nama,
+          tempat_tanggal_lahir: formData.tempatTanggalLahir, // Diubah dari camelCase ke snake_case
+          alamat: formData.alamat,
+          jenis_kelamin: formData.jenisKelamin, // Diubah dari camelCase ke snake_case
+          pekerjaan: formData.pekerjaan,
+          berlaku_hingga: formData.berlakuHingga, // Diubah dari camelCase ke snake_case
+
+          // Kolom tambahan
+          operator_notes: notes, // Diubah dari 'notes' ke 'operator_notes'
+          source_file_name: fileName,
+          raw_ocr_text: rawOcrText,
+          ocr_language: ocrLanguage,
+          // created_at tidak perlu diset manual karena default di DB adalah now()
+          // Tapi tidak masalah jika disertakan untuk konsistensi.
+          // created_at: now.toISOString(),
+        };
+
+        const { error } = await supabase
+          .from("ktp_submissions") // Menggunakan nama tabel 'ktp_submissions'
+          .insert([dataToSave]);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        setSaveFeedback("✅ Data KTP berhasil disimpan ke Supabase.");
+        setLastSavedAt(formattedDate);
+        console.info("Data berhasil disimpan ke Supabase:", dataToSave);
+      } else {
+        // Fallback jika Supabase tidak dikonfigurasi
+        setSaveFeedback(
+          "⚠️ Supabase tidak dikonfigurasi. Data tersimpan sebagai draft lokal di console."
+        );
+        setLastSavedAt(formattedDate);
+        console.table({
+          ...formData,
+          catatan: notes,
+          sumber: fileName,
+          ocr: rawOcrText,
+          is_draft: true,
+        });
+      }
+    } catch (error: any) {
+      console.error("Gagal menyimpan data:", error);
+      setSaveFeedback(
+        `❌ Gagal menyimpan data: ${error.message || "Kesalahan tak terduga"}`
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   /* =========================
@@ -648,7 +703,9 @@ function App() {
 
         <section className="mt-9 space-y-6">
           <div className="space-y-1">
-            <p className="text-sm font-medium text-slate-400">Hi, Pak security</p>
+            <p className="text-sm font-medium text-slate-400">
+              Hi, Pak security
+            </p>
             <h1 className="text-3xl font-semibold leading-tight">
               Siap berjaga hari ini?
             </h1>
@@ -909,18 +966,33 @@ function App() {
               <div className="space-y-3 pt-1">
                 <button
                   type="submit"
-                  className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition active:translate-y-px"
+                  disabled={isSaving}
+                  className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition active:translate-y-px disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Simpan data KTP
+                  {isSaving ? "Menyimpan..." : "Simpan data KTP"}
                 </button>
                 {saveFeedback && (
-                  <p className="text-center text-xs font-medium text-emerald-600">
+                  <p
+                    className={`text-center text-xs font-medium ${
+                      saveFeedback.startsWith("✅")
+                        ? "text-emerald-600"
+                        : saveFeedback.startsWith("⚠️")
+                        ? "text-amber-600"
+                        : "text-rose-600"
+                    }`}
+                  >
                     {saveFeedback}
                   </p>
                 )}
                 {lastSavedAt && (
                   <p className="text-center text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
                     Pembaruan terakhir: {lastSavedAt}
+                  </p>
+                )}
+                {!isSupabaseConfigured && (
+                  <p className="text-center text-xs text-rose-500">
+                    *Supabase belum dikonfigurasi, data hanya tersimpan ke
+                    console.
                   </p>
                 )}
               </div>

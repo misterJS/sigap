@@ -14,6 +14,7 @@ if (!apiKey) {
 }
 
 const genai = new GoogleGenAI({ apiKey });
+// Change "gemini-1.5-flash-latest" to "gemini-2.5-flash" (or similar)
 const modelName = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 const extractText = (response: any): string => {

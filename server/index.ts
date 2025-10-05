@@ -10,10 +10,12 @@ app.use(express.json({ limit: "25mb" })); // naikin limit dikit
 const apiKey = process.env.GEMINI_API_KEY;
 if (!apiKey) {
   console.error("GEMINI_API_KEY belum di-set");
-  process.exit(1);
+  // Pada environment Vercel, lebih baik log error dan biarkan proses berjalan
+  // Daripada process.exit(1), yang akan membuat build gagal.
+  // Untuk lokal dev, process.exit(1) masih oke.
 }
 
-const genai = new GoogleGenAI({ apiKey });
+const genai = new GoogleGenAI({ apiKey: apiKey || "" });
 // Change "gemini-1.5-flash-latest" to "gemini-2.5-flash" (or similar)
 const modelName = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
@@ -123,7 +125,10 @@ Jika ragu, isi string kosong.`,
   }
 });
 
-const port = Number(process.env.PORT) || 8787;
-app.listen(port, () => {
-  console.log("OCR server listening on http://localhost:" + port);
-});
+// Hapus app.listen()
+
+/**
+ * WAJIB: Ekspor aplikasi Express sebagai modul.
+ * Vercel Serverless Function akan secara otomatis memanggil handler ini.
+ */
+export default app;

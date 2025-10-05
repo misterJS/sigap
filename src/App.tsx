@@ -1,15 +1,25 @@
-import { type ChangeEvent, type FormEvent, type ReactNode, useEffect, useRef, useState } from "react"
-import type { LoggerMessage, Worker as TesseractWorker } from "tesseract.js"
+import {
+  type ChangeEvent,
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+
+/* =========================
+   Types & Constants
+========================= */
 
 type KtpData = {
-  nik: string
-  nama: string
-  tempatTanggalLahir: string
-  alamat: string
-  jenisKelamin: string
-  pekerjaan: string
-  berlakuHingga: string
-}
+  nik: string;
+  nama: string;
+  tempatTanggalLahir: string;
+  alamat: string;
+  jenisKelamin: string;
+  pekerjaan: string;
+  berlakuHingga: string;
+};
 
 const emptyData: KtpData = {
   nik: "",
@@ -19,423 +29,416 @@ const emptyData: KtpData = {
   jenisKelamin: "",
   pekerjaan: "",
   berlakuHingga: "",
-}
+};
 
-const statusMessages: Record<string, string> = {
-  "initializing tesseract": "Menyiapkan mesin OCR...",
-  "loading tesseract core": "Mengunduh inti mesin OCR...",
-  "loaded tesseract core": "Mesin OCR siap digunakan",
-  "initializing api": "Menginisialisikan modul OCR...",
-  "loading language traineddata": "Mengunduh model bahasa...",
-  "loaded language traineddata": "Model bahasa siap...",
-  "recognizing text": "Mengenali teks pada KTP...",
-}
+/* =========================
+   Helpers (Parsing)
+========================= */
 
-const cleanValue = (value: string) => value.replace(/\s+/g, " ").replace(/^[,.;:|\-]+/, "").trim()
+const cleanValue = (value: string) =>
+  value
+    .replace(/\s+/g, " ")
+    .replace(/^[,.;:|\-]+/, "")
+    .trim();
 
 const parseKtpData = (rawText: string): KtpData => {
-  const sanitized = rawText.replace(/\r/g, "")
-  const lines = sanitized
+  let text = rawText
+    .replace(/\r/g, "")
+    .replace(/[•▪·►■◆●]/g, ".")
+    .replace(/[“”‘’]/g, "'")
+    .replace(/\s*([:.\-–])\s*/g, " $1 ")
+    .replace(/\bNIK\s+i\b/gi, "NIK")
+    .replace(/Tempat\s*Tg[iI]/gi, "Tempat/Tgl")
+    .toUpperCase();
+
+  text = text.replace(
+    /(\b(ALAMAT|NAMA|NIK|JENIS\s*KELAMIN|TEMPAT.*LAHIR|PEKERJAAN|BERLAKU.*HINGGA|STATUS|AGAMA|KEWARGANEGARAAN|KEL\/?DESA|KEL\s*DESA|RT\/?RW|KECAMATAN)\b)\s*[.:\-–]\s*/g,
+    "$1: "
+  );
+
+  const lines = text
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-  const lowerLines = lines.map((line) => line.toLowerCase())
+    .map((l) => l.trim())
+    .filter(Boolean);
 
-  const getIndex = (keywords: string[]) =>
-    lowerLines.findIndex((line) => keywords.every((keyword) => line.includes(keyword)))
+  const isLabel = (s: string) =>
+    /^(NIK|NAMA|TEMPAT.*LAHIR|JENIS\s*KELAMIN|ALAMAT|RT\/?RW|KEL\/?DESA|KEL\s*DESA|KECAMATAN|AGAMA|STATUS|PEKERJAAN|KEWARGANEGARAAN|BERLAKU.*HINGGA)\b/.test(
+      s
+    );
 
-  const valueFromIndex = (index: number): string => {
-    if (index === -1) {
-      return ""
+  const afterColon = (s: string) => {
+    const idx = s.indexOf(":");
+    return idx >= 0 ? s.slice(idx + 1).trim() : "";
+  };
+
+  const findIdx = (re: RegExp) => lines.findIndex((l) => re.test(l));
+
+  const takeValue = (idx: number, opt?: { lookahead?: number }) => {
+    if (idx < 0) return "";
+    const la = Math.max(1, opt?.lookahead ?? 2);
+    const v0 = afterColon(lines[idx]);
+    if (v0) return v0;
+    for (let step = 1; step <= la; step++) {
+      const cand = lines[idx + step];
+      if (!cand) break;
+      if (isLabel(cand)) break;
+      const v = afterColon(cand) || cand;
+      if (v && !isLabel(v)) return v.trim();
     }
+    return "";
+  };
 
-    const current = lines[index]
-    const splitted = current.split(/[:]/)
-    if (splitted.length > 1) {
-      const afterColon = cleanValue(splitted.slice(1).join(":"))
-      if (afterColon) {
-        return afterColon
-      }
-    }
-
-    const next = lines[index + 1]
-    return next ? cleanValue(next) : ""
-  }
-
-  const collectAddress = (index: number): string => {
-    if (index === -1) {
-      return ""
-    }
-
-    const stopKeywords = [
-      "rt",
-      "rw",
-      "dusun",
-      "desa",
-      "kel",
-      "kelurahan",
-      "kecamatan",
-      "agama",
-      "status",
-      "perkawinan",
-      "pekerjaan",
-      "kewarganegaraan",
-      "berlaku",
-      "nik",
-      "nama",
-      "jenis",
-      "gol.",
-    ]
-
-    const chunks: string[] = []
-    const first = valueFromIndex(index)
-    if (first) {
-      chunks.push(first)
-    }
-
-    for (let pointer = index + 1; pointer < lines.length; pointer += 1) {
-      const candidate = lines[pointer]
-      const lower = lowerLines[pointer]
-      if (stopKeywords.some((keyword) => lower.includes(keyword))) {
-        break
-      }
-
-      chunks.push(candidate)
-    }
-
-    return cleanValue(chunks.join(", "))
-  }
-
-  let nik = ""
-  const nikIndex = getIndex(["nik"])
-  if (nikIndex !== -1) {
-    const potential = lines[nikIndex].replace(/\D/g, "")
-    if (potential.length >= 16) {
-      nik = potential.slice(0, 16)
-    } else {
-      const neighbour = lines[nikIndex + 1]?.replace(/\D/g, "") ?? ""
-      if (neighbour.length >= 16) {
-        nik = neighbour.slice(0, 16)
-      }
+  // ===== NIK =====
+  let nik = "";
+  {
+    const nikIdx = findIdx(/^NIK\b/);
+    const scope =
+      nikIdx >= 0 ? [lines[nikIdx], lines[nikIdx + 1] ?? ""].join(" ") : text;
+    const near = scope.match(/\b(\d{16,})\b/);
+    if (near) nik = near[1].slice(0, 16);
+    if (!nik) {
+      const any = text.replace(/\D/g, "");
+      if (any.length >= 16) nik = any.slice(0, 16);
     }
   }
 
-  if (!nik) {
-    const digitsOnly = sanitized.replace(/\D/g, "")
-    if (digitsOnly.length >= 16) {
-      nik = digitsOnly.slice(0, 16)
-    }
-  }
+  // ===== Nama =====
+  const nama = (() => {
+    const idx = findIdx(/^NAMA\b/);
+    let v = takeValue(idx, { lookahead: 1 });
+    v = v.replace(/\bA[DL]\b$|\bST\b$|\bAD\b$/g, "").trim();
+    return v;
+  })();
 
-  const nama = valueFromIndex(getIndex(["nama"]))
-  const ttl = valueFromIndex(getIndex(["tempat", "lahir"]))
-  const jenisKelamin = valueFromIndex(getIndex(["jenis", "kelamin"]))
-  const pekerjaan = valueFromIndex(getIndex(["pekerjaan"]))
-  const berlakuHingga = valueFromIndex(getIndex(["berlaku"]))
-  const alamat = collectAddress(getIndex(["alamat"]))
+  // ===== TTL =====
+  const tempatTanggalLahir = (() => {
+    const idx = findIdx(/^TEMPAT.*LAHIR\b|^TEMPAT\/TGL\b/);
+    let v = takeValue(idx, { lookahead: 1 });
+    const m = v.match(
+      /([A-Z .'’-]+),?\s*(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/
+    );
+    return m ? `${m[1].replace(/\s+/g, " ").trim()}, ${m[2]}` : v;
+  })();
+
+  // ===== Jenis Kelamin =====
+  const jenisKelamin = (() => {
+    const idx = findIdx(/^JENIS\s*KELAMIN\b/);
+    let v = takeValue(idx, { lookahead: 1 });
+    return v
+      .replace(/[^A-Z \-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  })();
+
+  // ===== Alamat =====
+  const alamat = (() => {
+    const aIdx = findIdx(/^ALAMAT\b/);
+    const pieces: string[] = [];
+    const first = takeValue(aIdx, { lookahead: 1 });
+    if (first) pieces.push(first);
+
+    const rtIdx = findIdx(/^RT\/?RW\b/);
+    if (rtIdx >= 0) {
+      const rt = takeValue(rtIdx, { lookahead: 1 }).replace(/\s+/g, "");
+      if (rt) pieces.push(`RT/RW ${rt}`);
+    }
+
+    const kelIdx = findIdx(/^(KEL\/?DESA|KEL\s*DESA)\b/);
+    if (kelIdx >= 0) {
+      const kel = takeValue(kelIdx, { lookahead: 1 }).replace(/^-/, "").trim();
+      if (kel) pieces.push(`Kel/Desa ${kel}`);
+    }
+
+    const kecIdx = findIdx(/^KECAMATAN\b/);
+    if (kecIdx >= 0) {
+      const kec = takeValue(kecIdx, { lookahead: 1 })
+        .replace(/^[.\-]/, "")
+        .trim();
+      if (kec) pieces.push(`Kecamatan ${kec}`);
+    }
+    return cleanValue(pieces.join(", "));
+  })();
+
+  // ===== Pekerjaan =====
+  const pekerjaan = (() => {
+    const idx = findIdx(/^PEKERJAAN\b/);
+    let v = takeValue(idx, { lookahead: 1 });
+    v = v.replace(/\b\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4}\b$/, "").trim();
+    v = v.replace(/^-\s*/, "");
+    return v;
+  })();
+
+  // ===== Berlaku Hingga =====
+  const berlakuHingga = (() => {
+    const idx = findIdx(/^BERLAKU.*HINGGA\b/);
+    let v = takeValue(idx, { lookahead: 2 });
+    if (/SEUMUR\s*HIDUP/.test(v)) return "SEUMUR HIDUP";
+    return v;
+  })();
 
   return {
     nik,
     nama,
-    tempatTanggalLahir: ttl,
+    tempatTanggalLahir,
     alamat,
     jenisKelamin,
     pekerjaan,
     berlakuHingga,
-  }
-}
+  };
+};
+
+/* =========================
+   Component
+========================= */
 
 function App() {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [ktpData, setKtpData] = useState<KtpData | null>(null)
-  const [formData, setFormData] = useState<KtpData>(emptyData)
-  const [notes, setNotes] = useState("")
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [saveFeedback, setSaveFeedback] = useState<string | null>(null)
-  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
-  const [ocrProgress, setOcrProgress] = useState(0)
-  const [ocrStatus, setOcrStatus] = useState<string | null>(null)
-  const [ocrError, setOcrError] = useState<string | null>(null)
-  const [rawOcrText, setRawOcrText] = useState("")
-  const [ocrLanguage, setOcrLanguage] = useState<string | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [ktpData, setKtpData] = useState<KtpData | null>(null);
+  const [formData, setFormData] = useState<KtpData>(emptyData);
+  const [notes, setNotes] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrStatus, setOcrStatus] = useState<string | null>(null);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [rawOcrText, setRawOcrText] = useState("");
+  const [ocrLanguage, setOcrLanguage] = useState<string | null>(null);
 
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const galleryInputRef = useRef<HTMLInputElement>(null)
-  const workerInitPromiseRef = useRef<Promise<TesseractWorker> | null>(null)
-  const workerRef = useRef<TesseractWorker | null>(null)
-  const isMountedRef = useRef(true)
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  /* ========= Lifecycle cleanup ========= */
   useEffect(() => {
     return () => {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl)
-      }
-    }
-  }, [previewUrl])
-
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false
-      workerInitPromiseRef.current = null
-      if (workerRef.current) {
-        void workerRef.current.terminate()
-        workerRef.current = null
-      }
-    }
-  }, [])
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   useEffect(() => {
     if (!ktpData) {
-      setFormData(emptyData)
-      return
+      setFormData(emptyData);
+      return;
     }
-
-    setFormData(ktpData)
-  }, [ktpData])
+    setFormData(ktpData);
+  }, [ktpData]);
 
   useEffect(() => {
-    if (!saveFeedback) {
-      return
-    }
+    if (!saveFeedback) return;
+    const timeoutId = window.setTimeout(() => setSaveFeedback(null), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [saveFeedback]);
 
-    const timeoutId = window.setTimeout(() => {
-      setSaveFeedback(null)
-    }, 3000)
+  /* =========================
+     Image Preprocess (safe)
+  ========================= */
 
-    return () => {
-      window.clearTimeout(timeoutId)
-    }
-  }, [saveFeedback])
-
-  useEffect(() => {
-    void ensureWorker().catch((error) => {
-      console.error("Gagal memuat mesin OCR lebih awal", error)
-    })
-  }, [])
   const preprocessImage = async (imageFile: File): Promise<Blob | File> => {
     try {
-      const bitmap = await createImageBitmap(imageFile)
-      const maxDimension = 1400
-      const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
-      const targetWidth = Math.max(1, Math.round(bitmap.width * scale))
-      const targetHeight = Math.max(1, Math.round(bitmap.height * scale))
-      const canvas = document.createElement("canvas")
-      canvas.width = targetWidth
-      canvas.height = targetHeight
-      const context = canvas.getContext("2d")
+      const bitmap =
+        "createImageBitmap" in window
+          ? await createImageBitmap(imageFile)
+          : null;
+
+      if (!bitmap) return imageFile;
+
+      const maxDimension = 1400;
+      const scale = Math.min(
+        1,
+        maxDimension / Math.max(bitmap.width, bitmap.height)
+      );
+      const targetWidth = Math.max(1, Math.round(bitmap.width * scale));
+      const targetHeight = Math.max(1, Math.round(bitmap.height * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const context = canvas.getContext("2d");
       if (!context) {
-        bitmap.close()
-        return imageFile
+        bitmap.close();
+        return imageFile;
       }
 
-      context.imageSmoothingEnabled = true
-      context.imageSmoothingQuality = "high"
-      context.drawImage(bitmap, 0, 0, targetWidth, targetHeight)
-      bitmap.close()
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(bitmap, 0, 0, targetWidth, targetHeight);
+      bitmap.close();
 
-      const imageData = context.getImageData(0, 0, targetWidth, targetHeight)
-      const { data } = imageData
-      for (let index = 0; index < data.length; index += 4) {
-        const gray = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114
-        const normalized = gray > 210 ? 255 : gray < 60 ? 0 : gray
-        data[index] = normalized
-        data[index + 1] = normalized
-        data[index + 2] = normalized
+      const imageData = context.getImageData(0, 0, targetWidth, targetHeight);
+      const { data } = imageData;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const gray =
+          data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        const normalized = gray > 210 ? 255 : gray < 60 ? 0 : gray;
+        data[i] = data[i + 1] = data[i + 2] = normalized;
       }
-      context.putImageData(imageData, 0, 0)
+      context.putImageData(imageData, 0, 0);
 
       const processedBlob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.82)
-      })
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.82);
+      });
 
-      return processedBlob ?? imageFile
+      return processedBlob ?? imageFile;
     } catch (error) {
-      console.warn("Gagal memproses gambar sebelum OCR", error)
-      return imageFile
+      console.warn("Gagal memproses gambar sebelum OCR", error);
+      return imageFile;
     }
-  }
-  const ensureWorker = async (): Promise<TesseractWorker> => {
-    if (workerRef.current) {
-      return workerRef.current
-    }
+  };
 
-    if (workerInitPromiseRef.current) {
-      return workerInitPromiseRef.current
-    }
+  /* =========================
+     Helpers (client)
+  ========================= */
 
-    setOcrStatus("Menyiapkan mesin OCR...")
-    setOcrProgress(0)
+  const blobToDataURL = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
 
-    const initialization = (async () => {
-      const { createWorker, PSM } = await import("tesseract.js")
+  /* =========================
+     Handlers
+  ========================= */
 
-      const logger = (message: LoggerMessage) => {
-        if (!isMountedRef.current) {
-          return
-        }
+  const openCamera = () => cameraInputRef.current?.click();
+  const openFilePicker = () => galleryInputRef.current?.click();
 
-        const readableStatus = statusMessages[message.status] ?? message.status
-        setOcrStatus(readableStatus)
-        if (typeof message.progress === "number") {
-          setOcrProgress(message.progress)
-        }
-      }
+  const handleFileSelection = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.currentTarget.files?.[0];
+    if (!file) return;
 
-      const requestedLanguage = "ind"
-      let languageUsed = requestedLanguage
-      let worker: TesseractWorker
+    const url = URL.createObjectURL(file);
+    setPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return url;
+    });
+    setFileName(file.name);
 
+    setIsProcessing(true);
+    setOcrError(null);
+    setRawOcrText("");
+    setOcrStatus("Mengoptimalkan foto KTP...");
+    setOcrProgress(10);
+
+    try {
+      const prepared = await preprocessImage(file);
+      const imageBase64 = await blobToDataURL(prepared);
+
+      setOcrStatus("Mengirim ke Gemini...");
+      setOcrProgress(40);
+
+      const resp = await fetch("/api/ocr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64, mode: "ktp" }),
+      });
+
+      // robust JSON parsing
+      let payload: any;
       try {
-        worker = await createWorker(requestedLanguage, undefined, { logger })
-        await worker.load()
-      } catch (error) {
-        console.warn("Gagal memuat bahasa", requestedLanguage, error)
-        languageUsed = "eng"
-        if (isMountedRef.current) {
-          setOcrStatus("Model bahasa Indonesia belum tersedia, memakai bahasa Inggris...")
+        payload = await resp.json();
+      } catch {
+        const text = await resp.text();
+        throw new Error(
+          `Server returned non-JSON (status ${resp.status}): ${text?.slice(
+            0,
+            200
+          )}`
+        );
+      }
+
+      setOcrStatus("Membaca hasil...");
+      setOcrProgress(75);
+
+      if (!payload?.ok) {
+        throw new Error(payload?.error || `HTTP ${resp.status}`);
+      }
+
+      if (payload.result) {
+        const result = payload.result as KtpData;
+        setKtpData(result);
+        setFormData(result);
+        setRawOcrText(JSON.stringify(result, null, 2));
+        setOcrLanguage("gemini");
+      } else if (payload.raw) {
+        const raw: string = payload.raw;
+        setRawOcrText(raw);
+        const parsed = parseKtpData(raw);
+        setKtpData(parsed);
+        setFormData(parsed);
+        setOcrLanguage("gemini");
+        if (!parsed.nik && !parsed.nama) {
+          setOcrError(
+            "Model mengembalikan teks mentah. Cek 'Hasil OCR mentah'."
+          );
         }
-        worker = await createWorker(languageUsed, undefined, { logger })
-        await worker.load()
+      } else if (payload.text) {
+        const raw: string = payload.text;
+        setRawOcrText(raw);
+        const parsed = parseKtpData(raw);
+        setKtpData(parsed);
+        setFormData(parsed);
+        setOcrLanguage("gemini");
       }
 
-      await worker.setParameters({
-        tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
-        preserve_interword_spaces: "1",
-        tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz-.,/ ",
-      })
-
-      if (isMountedRef.current) {
-        setOcrLanguage(languageUsed)
-      }
-
-      workerRef.current = worker
-      return worker
-    })()
-
-    workerInitPromiseRef.current = initialization
-
-    try {
-      const worker = await initialization
-      workerInitPromiseRef.current = null
-      return worker
-    } catch (error) {
-      workerInitPromiseRef.current = null
-      throw error
-    }
-  }
-
-  const openCamera = () => {
-    cameraInputRef.current?.click()
-  }
-
-  const openFilePicker = () => {
-    galleryInputRef.current?.click()
-  }
-
-  const handleFileSelection = async (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.currentTarget
-    const file = input.files?.[0]
-
-    if (!file) {
-      return
-    }
-
-    const url = URL.createObjectURL(file)
-
-    setPreviewUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current)
-      }
-
-      return url
-    })
-
-    setFileName(file.name)
-    setRawOcrText("")
-    setOcrError(null)
-    setIsProcessing(true)
-    setOcrStatus("Mengoptimalkan foto KTP...")
-    setOcrProgress(0)
-
-    try {
-      const preparedSource = await preprocessImage(file)
-      if (!isMountedRef.current) {
-        return
-      }
-
-      const worker = await ensureWorker()
-      if (!isMountedRef.current) {
-        return
-      }
-
-      setOcrStatus("Mengenali teks pada KTP...")
-      const { data } = await worker.recognize(preparedSource)
-      if (!isMountedRef.current) {
-        return
-      }
-
-      setRawOcrText(data.text)
-      const parsed = parseKtpData(data.text)
-      setKtpData(parsed)
-
-      if (!parsed.nik && !parsed.nama) {
-        setOcrError("Model OCR belum berhasil mendeteksi data utama. Periksa hasil mentah di bawah ini.")
-      }
-    } catch (error) {
-      console.error("OCR gagal", error)
-      if (isMountedRef.current) {
-        setOcrError("Gagal memproses gambar. Coba ulangi dengan foto yang lebih jelas.")
-      }
+      setOcrProgress(100);
+    } catch (err: any) {
+      console.error(err);
+      setOcrError(err?.message || "Gagal memproses gambar.");
     } finally {
-      if (isMountedRef.current) {
-        setIsProcessing(false)
-        setOcrStatus(null)
-        setOcrProgress(0)
-      }
+      setIsProcessing(false);
+      setOcrStatus(null);
+      setTimeout(() => setOcrProgress(0), 400);
+      // amankan supaya tidak error saat e.currentTarget null/invalid
+      try {
+        if (e?.currentTarget) (e.currentTarget as HTMLInputElement).value = "";
+      } catch {}
     }
-
-    input.value = ""
-  }
+  };
 
   const handleInputChange =
     (field: keyof KtpData) => (event: ChangeEvent<HTMLInputElement>) => {
-      const value = event.currentTarget.value
-      setFormData((prev) => ({
-        ...prev,
-        [field]: value,
-      }))
-    }
+      const value = event.currentTarget.value;
+      setFormData((prev) => ({ ...prev, [field]: value }));
+    };
 
   const handleAlamatChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    const value = event.currentTarget.value
-    setFormData((prev) => ({
-      ...prev,
-      alamat: value,
-    }))
-  }
+    const value = event.currentTarget.value;
+    setFormData((prev) => ({ ...prev, alamat: value }));
+  };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-
-    setSaveFeedback("Data KTP tersimpan sebagai draft.")
-    const now = new Date()
+    event.preventDefault();
+    setSaveFeedback("Data KTP tersimpan sebagai draft.");
+    const now = new Date();
     setLastSavedAt(
       now.toLocaleString("id-ID", {
         day: "2-digit",
         month: "long",
         hour: "2-digit",
         minute: "2-digit",
-      }),
-    )
+      })
+    );
 
-    console.table({ ...formData, catatan: notes, sumber: fileName, ocr: rawOcrText })
-  }
+    console.table({
+      ...formData,
+      catatan: notes,
+      sumber: fileName,
+      ocr: rawOcrText,
+    });
+  };
+
+  /* =========================
+     UI
+  ========================= */
 
   const fieldDefinitions: Array<{
-    key: keyof KtpData
-    label: string
-    placeholder: string
+    key: keyof KtpData;
+    label: string;
+    placeholder: string;
   }> = [
     { key: "nik", label: "NIK", placeholder: "Masukkan 16 digit NIK" },
     { key: "nama", label: "Nama lengkap", placeholder: "Nama sesuai KTP" },
@@ -444,24 +447,30 @@ function App() {
       label: "Tempat & Tanggal Lahir",
       placeholder: "Contoh: Semarang, 12 Januari 1994",
     },
-    { key: "jenisKelamin", label: "Jenis kelamin", placeholder: "Laki-laki / Perempuan" },
+    {
+      key: "jenisKelamin",
+      label: "Jenis kelamin",
+      placeholder: "Laki-laki / Perempuan",
+    },
     { key: "pekerjaan", label: "Pekerjaan", placeholder: "Pekerjaan saat ini" },
     {
       key: "berlakuHingga",
       label: "Berlaku hingga",
       placeholder: "Seumur Hidup / 12-12-2030",
     },
-  ]
+  ];
 
-  const progressPercent = Math.round(Math.min(1, Math.max(0, ocrProgress)) * 100)
+  const progressPercent = Math.round(
+    Math.min(1, Math.max(0, ocrProgress / 100)) * 100
+  );
 
   const secondaryActions: Array<{
-    key: string
-    label: string
-    description: string
-    gradient: string
-    onClick: () => void
-    icon: ReactNode
+    key: string;
+    label: string;
+    description: string;
+    gradient: string;
+    onClick: () => void;
+    icon: ReactNode;
   }> = [
     {
       key: "upload",
@@ -470,9 +479,19 @@ function App() {
       gradient: "from-[#f1edff] to-[#ebe4ff]",
       onClick: openFilePicker,
       icon: (
-        <svg className="h-6 w-6 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <svg
+          className="h-6 w-6 text-indigo-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
           <path d="M12 5.5v10" strokeLinecap="round" />
-          <path d="M8.5 9 12 5.5 15.5 9" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M8.5 9 12 5.5 15.5 9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
           <rect x="4" y="13" width="16" height="6" rx="2" />
         </svg>
       ),
@@ -484,7 +503,13 @@ function App() {
       gradient: "from-[#fceeff] to-[#f7e5ff]",
       onClick: () => console.info("convert action placeholder"),
       icon: (
-        <svg className="h-6 w-6 text-purple-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <svg
+          className="h-6 w-6 text-purple-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
           <rect x="4" y="4" width="16" height="16" rx="3" />
           <path d="M9 8h6M9 12h6M9 16h3" strokeLinecap="round" />
         </svg>
@@ -497,7 +522,13 @@ function App() {
       gradient: "from-[#fff2d8] to-[#ffe6b4]",
       onClick: () => console.info("ai assistant placeholder"),
       icon: (
-        <svg className="h-6 w-6 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+        <svg
+          className="h-6 w-6 text-amber-500"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+        >
           <path d="M12 4v4" strokeLinecap="round" />
           <path d="M12 16v4" strokeLinecap="round" />
           <path d="M20 12h-4" strokeLinecap="round" />
@@ -506,7 +537,7 @@ function App() {
         </svg>
       ),
     },
-  ]
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f7f9ff] via-white to-[#d7ecff] text-slate-900">
@@ -517,7 +548,14 @@ function App() {
             className="flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm shadow-slate-200/60"
             aria-label="Buka menu"
           >
-            <svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <svg
+              className="h-5 w-5 text-slate-600"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+            >
               <path d="M5 7h14M5 12h14M5 17h14" />
             </svg>
           </button>
@@ -527,7 +565,13 @@ function App() {
               className="relative flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm shadow-slate-200/60"
               aria-label="Notifikasi"
             >
-              <svg className="h-5 w-5 text-slate-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <svg
+                className="h-5 w-5 text-slate-600"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+              >
                 <path d="M12 5a5 5 0 0 1 5 5v3.5l1.4 2.8A1 1 0 0 1 17.5 17h-11a1 1 0 0 1-.9-1.7L7 13.5V10a5 5 0 0 1 5-5Z" />
                 <path d="M9 18a3 3 0 0 0 6 0" strokeLinecap="round" />
               </svg>
@@ -542,8 +586,12 @@ function App() {
         <section className="mt-9 space-y-6">
           <div className="space-y-1">
             <p className="text-sm font-medium text-slate-400">Hi, Kannan</p>
-            <h1 className="text-3xl font-semibold leading-tight">Hari ini kita mau scan apa?</h1>
-            <p className="text-sm text-slate-500">Ambil foto KTP dan sistem akan mengisi formulir otomatis.</p>
+            <h1 className="text-3xl font-semibold leading-tight">
+              Hari ini kita mau scan apa?
+            </h1>
+            <p className="text-sm text-slate-500">
+              Ambil foto KTP dan sistem akan mengisi formulir otomatis.
+            </p>
           </div>
 
           <button
@@ -552,14 +600,25 @@ function App() {
             className="group flex w-full flex-col items-center justify-center gap-4 rounded-3xl bg-gradient-to-b from-[#e7efff] to-[#f1f6ff] p-6 text-slate-700 shadow-[0_25px_45px_-30px_rgba(37,99,235,0.45)] transition active:scale-[0.99]"
           >
             <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-indigo-500 shadow-sm shadow-indigo-200/60">
-              <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <svg
+                className="h-6 w-6"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              >
                 <path d="M4 9a2 2 0 0 1 2-2h1.3a1 1 0 0 0 .8-.4l.7-.9a1 1 0 0 1 .8-.4h4.8a1 1 0 0 1 .8.4l.7.9a1 1 0 0 0 .8.4H18a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
                 <circle cx="12" cy="12.5" r="3.5" />
               </svg>
             </span>
             <div className="text-center">
-              <p className="text-base font-semibold text-slate-700">Scan sekarang</p>
-              <p className="text-xs font-medium text-slate-400">Gunakan kamera belakang untuk hasil terbaik</p>
+              <p className="text-base font-semibold text-slate-700">
+                Scan sekarang
+              </p>
+              <p className="text-xs font-medium text-slate-400">
+                Gunakan kamera belakang untuk hasil terbaik
+              </p>
             </div>
           </button>
 
@@ -575,8 +634,12 @@ function App() {
                   {action.icon}
                 </span>
                 <div className="space-y-1">
-                  <p className="text-sm font-semibold text-slate-700">{action.label}</p>
-                  <p className="text-xs font-medium text-slate-400">{action.description}</p>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {action.label}
+                  </p>
+                  <p className="text-xs font-medium text-slate-400">
+                    {action.description}
+                  </p>
                 </div>
               </button>
             ))}
@@ -584,7 +647,14 @@ function App() {
 
           <div className="rounded-full border border-slate-200/80 bg-white/80 p-1 shadow-sm shadow-slate-200/40 backdrop-blur">
             <div className="flex items-center gap-3 rounded-full px-4 py-2">
-              <svg className="h-5 w-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <svg
+                className="h-5 w-5 text-slate-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              >
                 <circle cx="11" cy="11" r="6" />
                 <path d="m17 17 3 3" />
               </svg>
@@ -597,7 +667,14 @@ function App() {
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-white shadow"
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
                   <path d="M12 5v14" />
                   <path d="M5 12h14" />
                 </svg>
@@ -624,8 +701,14 @@ function App() {
             </div>
           ) : fileName ? (
             <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-4 py-3 text-xs font-medium text-slate-500 shadow-sm">
-              <span className="truncate">Berkas aktif: <span className="text-slate-700">{fileName}</span></span>
-              <button type="button" onClick={() => setFileName(null)} className="text-slate-400 transition hover:text-slate-600">
+              <span className="truncate">
+                Berkas aktif: <span className="text-slate-700">{fileName}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setFileName(null)}
+                className="text-slate-400 transition hover:text-slate-600"
+              >
                 Bersihkan
               </button>
             </div>
@@ -639,19 +722,32 @@ function App() {
 
           <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
             {previewUrl ? (
-              <img src={previewUrl} alt={fileName ?? "Pratinjau foto KTP"} className="h-64 w-full object-cover" />
+              <img
+                src={previewUrl}
+                alt={fileName ?? "Pratinjau foto KTP"}
+                className="h-64 w-full object-cover"
+              />
             ) : (
               <div className="flex h-64 flex-col items-center justify-center gap-5 px-6 text-center text-slate-400">
                 <span className="flex h-16 w-16 items-center justify-center rounded-2xl border border-dashed border-slate-300">
-                  <svg className="h-9 w-9 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                  <svg
+                    className="h-9 w-9 text-slate-300"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                  >
                     <rect x="3" y="5" width="18" height="14" rx="2" />
                     <path d="M8 11h8M8 15h4" />
                   </svg>
                 </span>
                 <div className="space-y-2">
-                  <p className="text-sm font-semibold text-slate-500">Belum ada foto KTP</p>
+                  <p className="text-sm font-semibold text-slate-500">
+                    Belum ada foto KTP
+                  </p>
                   <p className="text-xs leading-relaxed text-slate-400">
-                    Tekan tombol scan atau upload untuk mulai pemindaian. Pastikan foto tajam dan bebas pantulan cahaya.
+                    Tekan tombol scan atau upload untuk mulai pemindaian.
+                    Pastikan foto tajam dan bebas pantulan cahaya.
                   </p>
                 </div>
               </div>
@@ -661,26 +757,40 @@ function App() {
           <div className="space-y-5 rounded-3xl border border-slate-200 bg-white/90 p-5 shadow-sm backdrop-blur">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Hasil ekstraksi</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">
+                  Hasil ekstraksi
+                </p>
                 <p className="text-sm font-semibold text-slate-800">
-                  {ktpData ? "Periksa dan koreksi data berikut" : "Data akan muncul setelah foto dianalisis"}
+                  {ktpData
+                    ? "Periksa dan koreksi data berikut"
+                    : "Data akan muncul setelah foto dianalisis"}
                 </p>
               </div>
               <span
                 className={`inline-flex items-center justify-center rounded-full px-3 py-1 text-xs font-semibold ${
-                  ktpData ? "bg-emerald-100 text-emerald-600" : "bg-slate-200 text-slate-500"
+                  ktpData
+                    ? "bg-emerald-100 text-emerald-600"
+                    : "bg-slate-200 text-slate-500"
                 }`}
               >
-                {ktpData ? `Terbaca${ocrLanguage ? ` ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¯ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¿ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â½ ${ocrLanguage.toUpperCase()}` : ""}` : "Menunggu"}
+                {ktpData
+                  ? `Terbaca${
+                      ocrLanguage ? ` · ${ocrLanguage.toUpperCase()}` : ""
+                    }`
+                  : "Menunggu"}
               </span>
             </div>
 
             {rawOcrText && (
               <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-left">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Hasil OCR mentah</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    Hasil OCR mentah
+                  </p>
                   {ocrLanguage && (
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{ocrLanguage.toUpperCase()}</span>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+                      {ocrLanguage.toUpperCase()}
+                    </span>
                   )}
                 </div>
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-xs leading-relaxed text-slate-600">
@@ -692,7 +802,9 @@ function App() {
             <form className="space-y-4" onSubmit={handleSubmit}>
               {fieldDefinitions.map(({ key, label, placeholder }) => (
                 <div key={key} className="space-y-2">
-                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</label>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    {label}
+                  </label>
                   <input
                     type="text"
                     inputMode={key === "nik" ? "numeric" : undefined}
@@ -706,7 +818,9 @@ function App() {
               ))}
 
               <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Alamat</label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Alamat
+                </label>
                 <textarea
                   rows={3}
                   value={formData.alamat}
@@ -717,7 +831,9 @@ function App() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Catatan petugas</label>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Catatan petugas
+                </label>
                 <textarea
                   rows={3}
                   value={notes}
@@ -734,7 +850,11 @@ function App() {
                 >
                   Simpan data KTP
                 </button>
-                {saveFeedback && <p className="text-center text-xs font-medium text-emerald-600">{saveFeedback}</p>}
+                {saveFeedback && (
+                  <p className="text-center text-xs font-medium text-emerald-600">
+                    {saveFeedback}
+                  </p>
+                )}
                 {lastSavedAt && (
                   <p className="text-center text-[11px] font-medium uppercase tracking-[0.18em] text-slate-400">
                     Pembaruan terakhir: {lastSavedAt}
@@ -746,19 +866,24 @@ function App() {
         </section>
 
         <section className="mt-8 rounded-3xl border border-slate-200 bg-white/80 p-5 text-sm text-slate-600 shadow-sm backdrop-blur">
-          <h3 className="text-sm font-semibold uppercase tracking-[0.26em] text-slate-400">Tips akurasi pemindaian</h3>
+          <h3 className="text-sm font-semibold uppercase tracking-[0.26em] text-slate-400">
+            Tips akurasi pemindaian
+          </h3>
           <ul className="mt-4 space-y-3 text-sm leading-relaxed">
             <li className="flex gap-3">
               <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
-              Gunakan latar belakang polos dan pencahayaan merata tanpa bayangan.
+              Gunakan latar belakang polos dan pencahayaan merata tanpa
+              bayangan.
             </li>
             <li className="flex gap-3">
               <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
-              Pastikan nomor NIK dan teks penting terlihat tajam serta tidak terpotong.
+              Pastikan nomor NIK dan teks penting terlihat tajam serta tidak
+              terpotong.
             </li>
             <li className="flex gap-3">
               <span className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
-              Simpan berkas asli untuk verifikasi manual jika sistem tidak mengenali data dengan tepat.
+              Simpan berkas asli untuk verifikasi manual jika sistem tidak
+              mengenali data dengan tepat.
             </li>
           </ul>
         </section>
@@ -780,7 +905,7 @@ function App() {
         />
       </main>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

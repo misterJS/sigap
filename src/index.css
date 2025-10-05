@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@source "../index.html";
+@source "./**/*.{ts,tsx,jsx,js}";
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    @apply m-0 min-h-screen bg-slate-100 font-sans text-slate-950 antialiased;
+  }
+}

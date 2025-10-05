@@ -8,7 +8,7 @@ import {
 } from "react";
 
 /* =========================
-   Types & Constants
+    Types & Constants
 ========================= */
 
 type KtpData = {
@@ -32,7 +32,7 @@ const emptyData: KtpData = {
 };
 
 /* =========================
-   Helpers (Parsing)
+    Helpers (Parsing) - Sudah diperbaiki di respons sebelumnya
 ========================= */
 
 const cleanValue = (value: string) =>
@@ -49,10 +49,12 @@ const parseKtpData = (rawText: string): KtpData => {
     .replace(/\s*([:.\-–])\s*/g, " $1 ")
     .replace(/\bNIK\s+i\b/gi, "NIK")
     .replace(/Tempat\s*Tg[iI]/gi, "Tempat/Tgl")
+    .replace(/\b[JL]\s*(?:[:.\-–])?\s*([A-Z0-9])/gi, "JALAN $1") // Normalisasi singkatan jalan (JL)
     .toUpperCase();
 
   text = text.replace(
-    /(\b(ALAMAT|NAMA|NIK|JENIS\s*KELAMIN|TEMPAT.*LAHIR|PEKERJAAN|BERLAKU.*HINGGA|STATUS|AGAMA|KEWARGANEGARAAN|KEL\/?DESA|KEL\s*DESA|RT\/?RW|KECAMATAN)\b)\s*[.:\-–]\s*/g,
+    // Memperluas daftar label untuk dinormalisasi
+    /(\b(PROVINSI|KABUPATEN|KOTA|ALAMAT|NAMA|NIK|JENIS\s*KELAMIN|TEMPAT.*LAHIR|PEKERJAAN|BERLAKU.*HINGGA|STATUS|AGAMA|KEWARGANEGARAAN|KEL\/?DESA|KEL\s*DESA|RT\/?RW|KECAMATAN)\b)\s*[.:\-–]\s*/g,
     "$1: "
   );
 
@@ -62,7 +64,7 @@ const parseKtpData = (rawText: string): KtpData => {
     .filter(Boolean);
 
   const isLabel = (s: string) =>
-    /^(NIK|NAMA|TEMPAT.*LAHIR|JENIS\s*KELAMIN|ALAMAT|RT\/?RW|KEL\/?DESA|KEL\s*DESA|KECAMATAN|AGAMA|STATUS|PEKERJAAN|KEWARGANEGARAAN|BERLAKU.*HINGGA)\b/.test(
+    /^(PROVINSI|KABUPATEN|KOTA|NIK|NAMA|TEMPAT.*LAHIR|JENIS\s*KELAMIN|ALAMAT|RT\/?RW|KEL\/?DESA|KEL\s*DESA|KECAMATAN|AGAMA|STATUS|PEKERJAAN|KEWARGANEGARAAN|BERLAKU.*HINGGA)\b/.test(
       s
     );
 
@@ -110,43 +112,66 @@ const parseKtpData = (rawText: string): KtpData => {
     return v;
   })();
 
-  // ===== TTL =====
+  // ===== TTL (Tempat/Tanggal Lahir) =====
   const tempatTanggalLahir = (() => {
     const idx = findIdx(/^TEMPAT.*LAHIR\b|^TEMPAT\/TGL\b/);
     let v = takeValue(idx, { lookahead: 1 });
     const m = v.match(
       /([A-Z .'’-]+),?\s*(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/
     );
-    return m ? `${m[1].replace(/\s+/g, " ").trim()}, ${m[2]}` : v;
+    if (m) {
+      const place = m[1].replace(/\s+/g, " ").trim();
+      const datePart = m[2];
+      const dateNormalized = datePart.replace(/[\/\.]/g, "-");
+      return `${place}, ${dateNormalized}`;
+    }
+    return v;
   })();
 
-  // ===== Jenis Kelamin =====
+  // ===== Jenis Kelamin & Konversi ke Bahasa Indonesia =====
   const jenisKelamin = (() => {
     const idx = findIdx(/^JENIS\s*KELAMIN\b/);
     let v = takeValue(idx, { lookahead: 1 });
-    return v
+    v = v
       .replace(/[^A-Z \-]/g, "")
       .replace(/\s+/g, " ")
       .trim();
+
+    if (/\bLAKI.*LAKI\b|\bPRIA\b|\bMALE\b/.test(v)) return "LAKI-LAKI";
+    if (/\bPEREMPUAN\b|\bWANITA\b|\bFEMALE\b/.test(v)) return "PEREMPUAN";
+
+    const slashIdx = v.indexOf("/");
+    if (slashIdx > 0) {
+      const firstPart = v.slice(0, slashIdx).trim();
+      if (/\bLAKI.*LAKI\b|\bPRIA\b|\bMALE\b/.test(firstPart))
+        return "LAKI-LAKI";
+      if (/\bPEREMPUAN\b|\bWANITA\b|\bFEMALE\b/.test(firstPart))
+        return "PEREMPUAN";
+    }
+
+    return v;
   })();
 
-  // ===== Alamat =====
+  // ===== Alamat Peningkatan =====
   const alamat = (() => {
     const aIdx = findIdx(/^ALAMAT\b/);
     const pieces: string[] = [];
-    const first = takeValue(aIdx, { lookahead: 1 });
-    if (first) pieces.push(first);
+    let first = takeValue(aIdx, { lookahead: 1 });
+
+    if (first) {
+      pieces.push(first);
+    }
 
     const rtIdx = findIdx(/^RT\/?RW\b/);
     if (rtIdx >= 0) {
       const rt = takeValue(rtIdx, { lookahead: 1 }).replace(/\s+/g, "");
-      if (rt) pieces.push(`RT/RW ${rt}`);
+      if (rt && !pieces.some((p) => p.includes(rt))) pieces.push(`RT/RW ${rt}`);
     }
 
     const kelIdx = findIdx(/^(KEL\/?DESA|KEL\s*DESA)\b/);
     if (kelIdx >= 0) {
       const kel = takeValue(kelIdx, { lookahead: 1 }).replace(/^-/, "").trim();
-      if (kel) pieces.push(`Kel/Desa ${kel}`);
+      if (kel) pieces.push(`KEL/DESA ${kel}`);
     }
 
     const kecIdx = findIdx(/^KECAMATAN\b/);
@@ -154,9 +179,19 @@ const parseKtpData = (rawText: string): KtpData => {
       const kec = takeValue(kecIdx, { lookahead: 1 })
         .replace(/^[.\-]/, "")
         .trim();
-      if (kec) pieces.push(`Kecamatan ${kec}`);
+      if (kec) pieces.push(`KECAMATAN ${kec}`);
     }
-    return cleanValue(pieces.join(", "));
+
+    const uniquePieces = Array.from(
+      new Set(pieces.filter((p) => p.length > 0))
+    ).join(", ");
+
+    let finalAlamat = cleanValue(uniquePieces);
+    finalAlamat = finalAlamat
+      .replace(/\bJL\s+/g, "JALAN ")
+      .replace(/DESA\//g, "DESA ");
+
+    return finalAlamat;
   })();
 
   // ===== Pekerjaan =====
@@ -173,22 +208,24 @@ const parseKtpData = (rawText: string): KtpData => {
     const idx = findIdx(/^BERLAKU.*HINGGA\b/);
     let v = takeValue(idx, { lookahead: 2 });
     if (/SEUMUR\s*HIDUP/.test(v)) return "SEUMUR HIDUP";
+    const m = v.match(/(\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4})/);
+    if (m) return m[1].replace(/[\/\.]/g, "-");
     return v;
   })();
 
   return {
-    nik,
-    nama,
-    tempatTanggalLahir,
-    alamat,
-    jenisKelamin,
-    pekerjaan,
-    berlakuHingga,
+    nik: cleanValue(nik),
+    nama: cleanValue(nama),
+    tempatTanggalLahir: cleanValue(tempatTanggalLahir),
+    alamat: cleanValue(alamat),
+    jenisKelamin: cleanValue(jenisKelamin),
+    pekerjaan: cleanValue(pekerjaan),
+    berlakuHingga: cleanValue(berlakuHingga),
   };
 };
 
 /* =========================
-   Component
+    Component
 ========================= */
 
 function App() {
@@ -231,7 +268,7 @@ function App() {
   }, [saveFeedback]);
 
   /* =========================
-     Image Preprocess (safe)
+      Image Preprocess (safe)
   ========================= */
 
   const preprocessImage = async (imageFile: File): Promise<Blob | File> => {
@@ -288,7 +325,7 @@ function App() {
   };
 
   /* =========================
-     Helpers (client)
+      Helpers (client)
   ========================= */
 
   const blobToDataURL = (blob: Blob) =>
@@ -300,7 +337,7 @@ function App() {
     });
 
   /* =========================
-     Handlers
+      Handlers
   ========================= */
 
   const openCamera = () => cameraInputRef.current?.click();
@@ -358,30 +395,56 @@ function App() {
       }
 
       if (payload.result) {
+        // CASE 1: Model berhasil mengembalikan JSON valid (ideal)
         const result = payload.result as KtpData;
         setKtpData(result);
         setFormData(result);
         setRawOcrText(JSON.stringify(result, null, 2));
         setOcrLanguage("gemini");
       } else if (payload.raw) {
+        // CASE 2: Model mengembalikan teks mentah, seringkali dibungkus code block
         const raw: string = payload.raw;
         setRawOcrText(raw);
-        const parsed = parseKtpData(raw);
-        setKtpData(parsed);
-        setFormData(parsed);
-        setOcrLanguage("gemini");
-        if (!parsed.nik && !parsed.nama) {
-          setOcrError(
-            "Model mengembalikan teks mentah. Cek 'Hasil OCR mentah'."
+
+        // Bersihkan string dari Markdown Code Block (```json ... ```)
+        let cleanedRaw = raw.trim();
+        cleanedRaw = cleanedRaw.replace(/^```json\s*|```\s*$/g, "").trim();
+
+        // 1. Coba parse sebagai JSON murni
+        try {
+          const parsedJson = JSON.parse(cleanedRaw);
+          const result = parsedJson as KtpData;
+          setKtpData(result);
+          setFormData(result);
+          setRawOcrText(JSON.stringify(result, null, 2));
+          setOcrLanguage("gemini (JSON-parsed)");
+        } catch (jsonErr) {
+          // 2. Jika gagal, fallback ke parser lokal yang kuat (parseKtpData)
+          console.warn(
+            "Gagal parsing JSON dari raw output, menggunakan parser lokal.",
+            jsonErr
           );
+          const parsed = parseKtpData(cleanedRaw);
+          setKtpData(parsed);
+          setFormData(parsed);
+          setOcrLanguage("parser lokal");
+          if (!parsed.nik && !parsed.nama) {
+            setOcrError(
+              "Model mengembalikan teks mentah yang tidak dapat diparse. Cek 'Hasil OCR mentah'."
+            );
+          }
         }
       } else if (payload.text) {
+        // CASE 3: Fallback generic (jika backend tidak sengaja mengirim {ok:true, text: ...})
         const raw: string = payload.text;
         setRawOcrText(raw);
-        const parsed = parseKtpData(raw);
+        // Bersihkan dan gunakan parser lokal
+        const parsed = parseKtpData(
+          raw.replace(/^```json\s*|```\s*$/g, "").trim()
+        );
         setKtpData(parsed);
         setFormData(parsed);
-        setOcrLanguage("gemini");
+        setOcrLanguage("parser lokal");
       }
 
       setOcrProgress(100);
@@ -432,7 +495,7 @@ function App() {
   };
 
   /* =========================
-     UI
+      UI
   ========================= */
 
   const fieldDefinitions: Array<{
@@ -445,7 +508,7 @@ function App() {
     {
       key: "tempatTanggalLahir",
       label: "Tempat & Tanggal Lahir",
-      placeholder: "Contoh: Semarang, 12 Januari 1994",
+      placeholder: "Contoh: Semarang, 12-01-1994",
     },
     {
       key: "jenisKelamin",
@@ -585,12 +648,12 @@ function App() {
 
         <section className="mt-9 space-y-6">
           <div className="space-y-1">
-            <p className="text-sm font-medium text-slate-400">Hi, Kannan</p>
+            <p className="text-sm font-medium text-slate-400">Hi, Pak security</p>
             <h1 className="text-3xl font-semibold leading-tight">
-              Hari ini kita mau scan apa?
+              Siap berjaga hari ini?
             </h1>
             <p className="text-sm text-slate-500">
-              Ambil foto KTP dan sistem akan mengisi formulir otomatis.
+              Ambil foto KTP dan sistem akan membaca otomatis.
             </p>
           </div>
 

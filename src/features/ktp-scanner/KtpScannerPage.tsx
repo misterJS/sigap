@@ -19,6 +19,7 @@ import { OcrStatusPanel } from "./components/OcrStatusPanel";
 import { PreviewCard } from "./components/PreviewCard";
 import { OcrResultForm } from "./components/OcrResultForm";
 import { TipsSection } from "./components/TipsSection";
+import type { GateStatus } from "./components/GateStatusToggle";
 
 /* eslint-disable */
 export function KtpScannerPage() {
@@ -36,6 +37,7 @@ export function KtpScannerPage() {
   const [ocrError, setOcrError] = useState<string | null>(null);
   const [rawOcrText, setRawOcrText] = useState("");
   const [ocrLanguage, setOcrLanguage] = useState<string | null>(null);
+  const [gateStatus, setGateStatus] = useState<GateStatus>("masuk");
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +144,7 @@ export function KtpScannerPage() {
       return url;
     });
     setFileName(file.name);
+    setGateStatus("masuk");
 
     setIsProcessing(true);
     setOcrError(null);
@@ -279,6 +282,7 @@ export function KtpScannerPage() {
           source_file_name: fileName,
           raw_ocr_text: rawOcrText,
           ocr_language: ocrLanguage,
+          gate_status: gateStatus,
         };
 
         const { error } = await supabase
@@ -303,6 +307,7 @@ export function KtpScannerPage() {
           sumber: fileName,
           ocr: rawOcrText,
           is_draft: true,
+          gate_status: gateStatus,
         });
       }
     } catch (error: any) {
@@ -420,6 +425,8 @@ export function KtpScannerPage() {
             onFieldChange={handleFieldChange}
             onAlamatChange={handleAlamatChange}
             onNotesChange={setNotes}
+            gateStatus={gateStatus}
+            onGateStatusChange={setGateStatus}
           />
         </section>
         <TipsSection />

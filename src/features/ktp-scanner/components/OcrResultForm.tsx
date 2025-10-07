@@ -1,5 +1,6 @@
 import type { FormEvent, ChangeEvent } from "react";
 import type { KtpData, KtpFormField } from "../types";
+import { GateStatusToggle, type GateStatus } from "./GateStatusToggle";
 
 type OcrResultFormProps = {
   ktpData: KtpData | null;
@@ -16,6 +17,8 @@ type OcrResultFormProps = {
   onFieldChange: (field: keyof KtpData, value: string) => void;
   onAlamatChange: (value: string) => void;
   onNotesChange: (value: string) => void;
+  gateStatus: GateStatus;
+  onGateStatusChange: (value: GateStatus) => void;
 };
 
 export function OcrResultForm({
@@ -33,6 +36,8 @@ export function OcrResultForm({
   onFieldChange,
   onAlamatChange,
   onNotesChange,
+  gateStatus,
+  onGateStatusChange,
 }: OcrResultFormProps) {
   const handleInputChange =
     (field: keyof KtpData) => (event: ChangeEvent<HTMLInputElement>) =>
@@ -133,6 +138,8 @@ export function OcrResultForm({
             className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
           />
         </div>
+
+        <GateStatusToggle value={gateStatus} onChange={onGateStatusChange} />
 
         <div className="space-y-3 pt-1">
           <button

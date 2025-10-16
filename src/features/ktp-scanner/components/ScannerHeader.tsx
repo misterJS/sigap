@@ -65,7 +65,7 @@ export function ScannerHeader({
           <button
             type="button"
             onClick={onSignOut}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px xl:hidden"
           >
             Keluar
           </button>

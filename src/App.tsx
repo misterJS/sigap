@@ -1,9 +1,59 @@
+import { useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { AuthProvider, useAuth } from "./features/auth/AuthContext";
 import { AuthForm } from "./features/auth/AuthForm";
 import { KtpScannerPage } from "./features/ktp-scanner/KtpScannerPage";
+import { AppSidebar } from "./features/layout/AppSidebar";
+import { AccessLogsPage } from "./features/logs/AccessLogsPage";
+import { APP_ROUTE_LABEL, APP_ROUTES, type AppRoute } from "./features/layout/routes";
+
+function AuthenticatedApp({
+  user,
+  onSignOut,
+}: {
+  user: User;
+  onSignOut: () => void;
+}) {
+  const [activeRoute, setActiveRoute] = useState<AppRoute>("scanner");
+
+  return (
+    <div className="flex min-h-screen bg-slate-100">
+      <AppSidebar
+        activeRoute={activeRoute}
+        onNavigate={setActiveRoute}
+        onSignOut={onSignOut}
+      />
+      <div className="relative isolate flex flex-1 flex-col overflow-hidden bg-gradient-to-b from-[#f7f9ff] via-white to-[#d7ecff]">
+        <div className="flex items-center gap-3 border-b border-slate-200/70 bg-white/80 px-6 py-4 shadow-sm shadow-slate-200/40 backdrop-blur xl:hidden">
+          {APP_ROUTES.map((route) => {
+            const isActive = route === activeRoute;
+            const label = APP_ROUTE_LABEL[route];
+            return (
+              <button
+                key={route}
+                type="button"
+                onClick={() => setActiveRoute(route)}
+                className={`flex-1 rounded-2xl border px-3 py-2 text-sm font-semibold transition ${
+                  isActive
+                    ? "border-slate-900 bg-slate-900 text-white shadow-sm shadow-slate-900/20"
+                    : "border-slate-200 bg-white text-slate-500 hover:text-slate-900"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <main className="flex flex-1 flex-col overflow-y-auto">
+          {activeRoute === "scanner" ? <KtpScannerPage /> : <AccessLogsPage />}
+        </main>
+      </div>
+    </div>
+  );
+}
 
 function AppShell() {
-  const { user, loading, isConfigured } = useAuth();
+  const { user, loading, isConfigured, signOut } = useAuth();
 
   if (loading) {
     return (
@@ -31,7 +81,14 @@ function AppShell() {
     );
   }
 
-  return <KtpScannerPage />;
+  return (
+    <AuthenticatedApp
+      user={user}
+      onSignOut={() => {
+        void signOut();
+      }}
+    />
+  );
 }
 
 function App() {

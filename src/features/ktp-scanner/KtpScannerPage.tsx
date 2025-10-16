@@ -6,6 +6,7 @@ import {
   useState,
 } from "react";
 import { useAuth } from "../auth/AuthContext";
+import { extractUserIdentity } from "../auth/userMetadata";
 import { supabase, isSupabaseConfigured } from "../../lib/supabaseClient";
 import { fieldDefinitions } from "./constants";
 import { parseKtpData } from "./parser";
@@ -22,45 +23,11 @@ import { OcrResultForm } from "./components/OcrResultForm";
 import { TipsSection } from "./components/TipsSection";
 import type { GateStatus } from "./components/GateStatusToggle";
 
-const deriveUserInitials = (name?: string | null, email?: string | null) => {
-  const cleanedName = name?.trim();
-  if (cleanedName) {
-    const parts = cleanedName.split(/\s+/).filter(Boolean);
-    if (parts.length > 0) {
-      const initials = parts
-        .slice(0, 2)
-        .map((part) => part.charAt(0).toUpperCase())
-        .join("");
-      if (initials) {
-        return initials;
-      }
-    }
-  }
-
-  const cleanedEmail = email?.trim().toUpperCase();
-  if (cleanedEmail) {
-    const alphanumeric = cleanedEmail.replace(/[^A-Z0-9]/g, "");
-    if (alphanumeric) {
-      return alphanumeric.slice(0, 2);
-    }
-  }
-
-  return "SG";
-};
-
 /* eslint-disable */
 export function KtpScannerPage() {
   const { user, signOut } = useAuth();
-  const userMetadata = user?.user_metadata ?? {};
-  const userName =
-    (userMetadata.fullName as string | undefined) ??
-    (userMetadata.full_name as string | undefined) ??
-    (userMetadata.name as string | undefined) ??
-    null;
-  const userEmail =
-    (typeof userMetadata.email === "string" && userMetadata.email) || user?.email || null;
-  const userInitials = deriveUserInitials(userName, userEmail);
-  const createdById = user?.id ?? null;
+  const { id: createdById, name: userName, email: userEmail, initials: userInitials } =
+    extractUserIdentity(user);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -323,6 +290,8 @@ export function KtpScannerPage() {
           ocr_language: ocrLanguage,
           gate_status: gateStatus,
           created_by: createdById,
+          created_by_email: userEmail,
+          created_by_name: userName,
         };
 
         const { error } = await supabase
@@ -347,6 +316,8 @@ export function KtpScannerPage() {
           is_draft: true,
           gate_status: gateStatus,
           created_by: createdById,
+          created_by_email: userEmail,
+          created_by_name: userName,
         });
       }
     } catch (error: any) {
@@ -430,70 +401,69 @@ export function KtpScannerPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#f7f9ff] via-white to-[#d7ecff] text-slate-900">
-      <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col px-5 pb-24 pt-6">
-        <ScannerHeader
-          userInitials={userInitials}
-          userName={userName}
-          userEmail={userEmail}
-          onSignOut={() => {
-            void signOut();
-          }}
+    <div className="mx-auto flex w-full max-w-4xl flex-col px-6 pb-20 pt-6 text-slate-900 lg:px-10">
+      <ScannerHeader
+        userInitials={userInitials}
+        userName={userName}
+        userEmail={userEmail}
+        onSignOut={() => {
+          void signOut();
+        }}
+      />
+      <WelcomeSection
+        onPrimaryAction={openCamera}
+        userName={userName ?? userEmail ?? "Petugas"}
+        secondaryActions={secondaryActions}
+      />
+      <section className="mt-8 space-y-6">
+        <OcrStatusPanel
+          isProcessing={isProcessing}
+          ocrStatus={ocrStatus}
+          progressPercent={progressPercent}
+          fileName={fileName}
+          onClearFile={() => setFileName(null)}
+          ocrError={ocrError}
         />
-        <WelcomeSection
-          onPrimaryAction={openCamera}
-          userName={userName}
-          secondaryActions={secondaryActions}
+        <PreviewCard previewUrl={previewUrl} fileName={fileName} />
+        <OcrResultForm
+          ktpData={ktpData}
+          formData={formData}
+          rawOcrText={rawOcrText}
+          ocrLanguage={ocrLanguage}
+          notes={notes}
+          isSaving={isSaving}
+          saveFeedback={saveFeedback}
+          lastSavedAt={lastSavedAt}
+          isSupabaseConfigured={isSupabaseConfigured}
+          fields={fieldDefinitions}
+          onSubmit={handleSubmit}
+          onFieldChange={handleFieldChange}
+          onAlamatChange={handleAlamatChange}
+          onNotesChange={setNotes}
+          gateStatus={gateStatus}
+          onGateStatusChange={setGateStatus}
         />
-        <section className="mt-8 space-y-6">
-          <OcrStatusPanel
-            isProcessing={isProcessing}
-            ocrStatus={ocrStatus}
-            progressPercent={progressPercent}
-            fileName={fileName}
-            onClearFile={() => setFileName(null)}
-            ocrError={ocrError}
-          />
-          <PreviewCard previewUrl={previewUrl} fileName={fileName} />
-          <OcrResultForm
-            ktpData={ktpData}
-            formData={formData}
-            rawOcrText={rawOcrText}
-            ocrLanguage={ocrLanguage}
-            notes={notes}
-            isSaving={isSaving}
-            saveFeedback={saveFeedback}
-            lastSavedAt={lastSavedAt}
-            isSupabaseConfigured={isSupabaseConfigured}
-            fields={fieldDefinitions}
-            onSubmit={handleSubmit}
-            onFieldChange={handleFieldChange}
-            onAlamatChange={handleAlamatChange}
-            onNotesChange={setNotes}
-            gateStatus={gateStatus}
-            onGateStatusChange={setGateStatus}
-          />
-        </section>
-        <TipsSection />
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={handleFileSelection}
-        />
-        <input
-          ref={galleryInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={handleFileSelection}
-        />
-      </main>
+      </section>
+      <TipsSection />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFileSelection}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileSelection}
+      />
     </div>
   );
 }
+
 
 
 

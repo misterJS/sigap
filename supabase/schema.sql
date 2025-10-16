@@ -21,6 +21,8 @@ create table if not exists public.ktp_submissions (
   raw_ocr_text text,
   ocr_language text,
   created_by uuid references auth.users (id),
+  created_by_email text,
+  created_by_name text,
 
   constraint nik_length check (char_length(nik) <= 32)
 );
@@ -49,3 +51,4 @@ alter table public.ktp_submissions enable row level security;
 --   for all
 --   using (auth.role() = 'service_role')
 --   with check (auth.role() = 'service_role');
+

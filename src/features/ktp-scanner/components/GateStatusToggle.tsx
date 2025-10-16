@@ -1,4 +1,4 @@
-type GateStatus = "masuk" | "keluar";
+type GateStatus = "masuk" | "keluar" | "stay";
 
 type GateStatusToggleProps = {
   value: GateStatus;
@@ -8,6 +8,7 @@ type GateStatusToggleProps = {
 const OPTIONS: Array<{ value: GateStatus; label: string; description: string }> = [
   { value: "masuk", label: "Masuk Perumahan", description: "Penghuni atau tamu baru tiba" },
   { value: "keluar", label: "Keluar Perumahan", description: "Penghuni atau tamu meninggalkan area" },
+  { value: "stay", label: "Tinggal Sementara", description: "Penghuni sementara" },
 ];
 
 export function GateStatusToggle({ value, onChange }: GateStatusToggleProps) {

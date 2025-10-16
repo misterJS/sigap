@@ -23,6 +23,7 @@ type FilterState = {
   endDate: string;
   operatorKey: string;
   query: string;
+  status: "all" | GateStatus;
 };
 
 const initialFilters: FilterState = {
@@ -30,6 +31,7 @@ const initialFilters: FilterState = {
   endDate: "",
   operatorKey: "all",
   query: "",
+  status: "all",
 };
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: GateStatus; label: string }> = [
@@ -54,10 +56,13 @@ export function AccessLogsPage() {
   const [page, setPage] = useState(0);
   const pageSize = 100;
   const [hasMore, setHasMore] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // Debounce filter yang sering berubah
   const debouncedQuery = useDebouncedValue(filters.query, 450);
   const debouncedOperatorKey = useDebouncedValue(filters.operatorKey, 250);
+  const debouncedStatus = useDebouncedValue(filters.status, 250);
+  const toggleFilters = useCallback(() => setFiltersOpen((prev) => !prev), []);
 
   // Abort in-flight requests
   const abortRef = useRef<AbortController | null>(null);
@@ -85,6 +90,13 @@ export function AccessLogsPage() {
     return items;
   }, [logs]);
 
+  const activeFilterCount =
+    (filters.query.trim() ? 1 : 0) +
+    (filters.startDate ? 1 : 0) +
+    (filters.endDate ? 1 : 0) +
+    (filters.operatorKey !== "all" ? 1 : 0) +
+    (filters.status !== "all" ? 1 : 0);
+
   // Reset halaman saat filter berubah
   useEffect(() => {
     setPage(0);
@@ -92,6 +104,7 @@ export function AccessLogsPage() {
   }, [
     filters.startDate,
     filters.endDate,
+    filters.status,
     debouncedOperatorKey,
     debouncedQuery,
   ]);
@@ -142,8 +155,12 @@ export function AccessLogsPage() {
         if (debouncedOperatorKey !== "all") {
           const [column, value] = debouncedOperatorKey.split(":");
           if (column === "id") query = query.eq("created_by", value);
-          else if (column === "email")
-            query = query.eq("created_by_email", value);
+          else if (column === "email") query = query.eq("created_by_email", value);
+        }
+
+        // Filter status
+        if (debouncedStatus !== "all") {
+          query = query.eq("gate_status", debouncedStatus);
         }
 
         // Filter keyword nama (debounced)
@@ -205,6 +222,7 @@ export function AccessLogsPage() {
     filters.startDate,
     filters.endDate,
     debouncedOperatorKey,
+    debouncedStatus,
     debouncedQuery,
     page,
   ]);
@@ -336,6 +354,33 @@ export function AccessLogsPage() {
           Lihat catatan penjagaan berdasarkan petugas yang melakukan input.
           Gunakan filter untuk memeriksa rentang tanggal atau operator tertentu.
         </p>
+        {isSupabaseConfigured && (
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={toggleFilters}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px"
+              aria-expanded={filtersOpen}
+            >
+              <span>{filtersOpen ? "Sembunyikan filter" : "Tampilkan filter"}</span>
+              <svg
+                className={`h-4 w-4 transition-transform ${filtersOpen ? "rotate-180" : ""}`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            <span className="text-xs font-medium text-slate-400">
+              {activeFilterCount > 0
+                ? `${activeFilterCount} filter aktif`
+                : "Tidak ada filter aktif"}
+            </span>
+          </div>
+        )}
       </header>
 
       {!isSupabaseConfigured && (
@@ -346,67 +391,83 @@ export function AccessLogsPage() {
 
       {isSupabaseConfigured && (
         <>
-          <section className="mt-8 grid gap-4 rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur md:grid-cols-4 md:gap-6">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Cari tamu
-              </label>
-              <input
-                type="search"
-                placeholder="Masukkan nama tamu"
-                value={filters.query}
-                onChange={(e) =>
-                  updateFilter("query", e.currentTarget.value ?? "")
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Dari tanggal
-              </label>
-              <input
-                type="date"
-                value={filters.startDate}
-                onChange={(e) =>
-                  updateFilter("startDate", e.currentTarget.value ?? "")
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Sampai tanggal
-              </label>
-              <input
-                type="date"
-                value={filters.endDate}
-                onChange={(e) =>
-                  updateFilter("endDate", e.currentTarget.value ?? "")
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                Petugas
-              </label>
-              <select
-                value={filters.operatorKey}
-                onChange={(e) =>
-                  updateFilter("operatorKey", e.currentTarget.value ?? "all")
-                }
-                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
-              >
-                <option value="all">Semua petugas</option>
-                {uniqueOperators.map((operator) => (
-                  <option key={operator.value} value={operator.value}>
-                    {operator.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </section>
+          {filtersOpen && (
+            <section className="mt-8 grid gap-4 rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur md:grid-cols-5 md:gap-6">
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Cari tamu
+                </label>
+                <input
+                  type="search"
+                  placeholder="Masukkan nama tamu"
+                  value={filters.query}
+                  onChange={(e) => updateFilter("query", e.currentTarget.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Status gerbang
+                </label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => {
+                    const nextValue = (e.currentTarget.value || "all") as FilterState["status"];
+                    updateFilter("status", nextValue);
+                  }}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                >
+                  <option value="all">Semua status</option>
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Dari tanggal
+                </label>
+                <input
+                  type="date"
+                  value={filters.startDate}
+                  onChange={(e) => updateFilter("startDate", e.currentTarget.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Sampai tanggal
+                </label>
+                <input
+                  type="date"
+                  value={filters.endDate}
+                  onChange={(e) => updateFilter("endDate", e.currentTarget.value)}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Petugas
+                </label>
+                <select
+                  value={filters.operatorKey}
+                  onChange={(e) =>
+                    updateFilter("operatorKey", e.currentTarget.value || "all")
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                >
+                  <option value="all">Semua petugas</option>
+                  {uniqueOperators.map((operator) => (
+                    <option key={operator.value} value={operator.value}>
+                      {operator.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </section>
+          )}
 
           <section className="mt-6 rounded-3xl border border-slate-200/80 bg-white/95 p-6 shadow-lg shadow-slate-900/10 backdrop-blur">
             {updateMessage && (
@@ -707,3 +768,7 @@ export function AccessLogsPage() {
     </div>
   );
 }
+
+
+
+

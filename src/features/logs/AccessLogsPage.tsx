@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { id as idLocale } from "date-fns/locale/id";
 import { supabase, isSupabaseConfigured } from "../../lib/supabaseClient";
+import type { GateStatus } from "../ktp-scanner/components/GateStatusToggle";
 
 type LogEntry = {
   id: string;
@@ -27,11 +28,20 @@ const initialFilters: FilterState = {
   operatorKey: "all",
 };
 
+const STATUS_OPTIONS: ReadonlyArray<{ value: GateStatus; label: string }> = [
+  { value: "masuk", label: "Masuk perumahan" },
+  { value: "keluar", label: "Keluar perumahan" },
+  { value: "stay", label: "Tinggal sementara" },
+];
+
 export function AccessLogsPage() {
   const [filters, setFilters] = useState(initialFilters);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const uniqueOperators = useMemo(() => {
     const seen = new Set<string>();
@@ -125,16 +135,61 @@ export function AccessLogsPage() {
 
   const updateFilter = useCallback(
     <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
-      setFilters((prev) => ({ ...prev, [key]: value }));
+      setFilters((prev) => {
+        if (prev[key] === value) return prev;
+        return { ...prev, [key]: value };
+      });
     },
     []
   );
 
+  const handleStatusUpdate = useCallback(
+    async (entry: LogEntry, nextStatus: GateStatus) => {
+      if (!isSupabaseConfigured) {
+        setMutationError(
+          "Supabase belum dikonfigurasi. Tambahkan kredensial di .env untuk memperbarui status."
+        );
+        return;
+      }
+      if (entry.gate_status === nextStatus) return;
+
+      setUpdatingId(entry.id);
+      setMutationError(null);
+      setUpdateMessage(null);
+
+      try {
+        const { error: updateError } = await supabase
+          .from("ktp_submissions")
+          .update({ gate_status: nextStatus })
+          .eq("id", entry.id);
+
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+
+        setLogs((prev) =>
+          prev.map((item) =>
+            item.id === entry.id ? { ...item, gate_status: nextStatus } : item
+          )
+        );
+        setUpdateMessage("Status gerbang berhasil diperbarui.");
+      } catch (updateErr: any) {
+        console.error("Gagal memperbarui status gerbang:", updateErr);
+        setMutationError(
+          updateErr?.message || "Tidak dapat memperbarui status gerbang."
+        );
+      } finally {
+        setUpdatingId(null);
+      }
+    },
+    [isSupabaseConfigured]
+  );
+
   useEffect(() => {
-    if (isSupabaseConfigured && logs.length === 0 && !isLoading && !error) {
-      updateFilter("operatorKey", "all");
-    }
-  }, [isSupabaseConfigured, logs.length, isLoading, error, updateFilter]);
+    if (!updateMessage) return;
+    const timeoutId = window.setTimeout(() => setUpdateMessage(null), 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [updateMessage]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col px-6 pb-16 pt-8 text-slate-900 lg:px-12">
@@ -165,7 +220,6 @@ export function AccessLogsPage() {
                 Dari tanggal
               </label>
               <input
-                disabled
                 type="date"
                 value={filters.startDate}
                 onChange={(event) =>
@@ -180,7 +234,6 @@ export function AccessLogsPage() {
               </label>
               <input
                 type="date"
-                disabled
                 value={filters.endDate}
                 onChange={(event) =>
                   updateFilter("endDate", event.currentTarget?.value ?? "")
@@ -213,6 +266,16 @@ export function AccessLogsPage() {
           </section>
 
           <section className="mt-6 rounded-3xl border border-slate-200/80 bg-white/95 p-6 shadow-lg shadow-slate-900/10 backdrop-blur">
+            {updateMessage && (
+              <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+                {updateMessage}
+              </div>
+            )}
+            {mutationError && (
+              <div className="mb-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600">
+                {mutationError}
+              </div>
+            )}
             {isLoading && (
               <div className="flex items-center justify-center py-12">
                 <div className="text-sm font-medium text-slate-500">
@@ -276,12 +339,14 @@ export function AccessLogsPage() {
                         entry.created_by_name ||
                         entry.created_by_email ||
                         "Tidak diketahui";
-                      const gateStatus =
+                      const gateStatusLabel =
                         entry.gate_status === "keluar"
                           ? "Keluar"
                           : entry.gate_status === "masuk"
                           ? "Masuk"
-                          : "Tidak ada";
+                          : entry.gate_status === "stay"
+                          ? "Tinggal sementara"
+                          : "Belum ditetapkan";
                       return (
                         <tr key={entry.id} className="align-top">
                           <td className="px-3 py-4 font-semibold text-slate-700">
@@ -296,17 +361,38 @@ export function AccessLogsPage() {
                             {entry.nik || "-"}
                           </td>
                           <td className="px-3 py-4">
-                            <span
-                              className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-                                gateStatus === "Masuk"
-                                  ? "bg-emerald-100 text-emerald-600"
-                                  : gateStatus === "Keluar"
-                                  ? "bg-sky-100 text-sky-600"
-                                  : "bg-slate-100 text-slate-500"
-                              }`}
-                            >
-                              {gateStatus}
-                            </span>
+                            <div className="flex flex-col gap-2">
+                              <span
+                                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                                  entry.gate_status === "masuk"
+                                    ? "bg-emerald-100 text-emerald-600"
+                                    : entry.gate_status === "keluar"
+                                    ? "bg-sky-100 text-sky-600"
+                                    : entry.gate_status === "stay"
+                                    ? "bg-amber-100 text-amber-600"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {gateStatusLabel}
+                              </span>
+                              <select
+                                value={entry.gate_status ?? ""}
+                                onChange={(event) => {
+                                  const nextValue = event.currentTarget.value as GateStatus | "";
+                                  if (!nextValue) return;
+                                  void handleStatusUpdate(entry, nextValue as GateStatus);
+                                }}
+                                disabled={updatingId === entry.id}
+                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {!entry.gate_status && <option value="">Pilih status</option>}
+                                {STATUS_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           </td>
                           <td className="px-3 py-4">
                             <div className="space-y-1">
@@ -336,3 +422,4 @@ export function AccessLogsPage() {
     </div>
   );
 }
+

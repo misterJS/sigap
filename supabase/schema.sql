@@ -57,9 +57,9 @@ create policy "Allow authenticated insert ktp submissions"
     and (created_by is null or created_by = auth.uid())
   );
 
-create policy "Allow authenticated update own ktp submissions"
+create policy "Allow authenticated update ktp submissions"
   on public.ktp_submissions
   for update
-  using (auth.role() = 'authenticated' and created_by = auth.uid())
-  with check (created_by = auth.uid());
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');
 

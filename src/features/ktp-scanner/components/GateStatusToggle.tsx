@@ -1,4 +1,4 @@
-type GateStatus = "masuk" | "stay";
+type GateStatus = "masuk" | "stay" | "keluar";
 
 type GateStatusToggleProps = {
   value: GateStatus;

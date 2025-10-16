@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { format } from "date-fns";
 import { id as idLocale } from "date-fns/locale/id";
 import { supabase, isSupabaseConfigured } from "../../lib/supabaseClient";
 import type { GateStatus } from "../ktp-scanner/components/GateStatusToggle";
+import { useDebouncedValue } from "../../hooks/useDebounceValue";
 
 type LogEntry = {
   id: string;
@@ -20,12 +21,14 @@ type FilterState = {
   startDate: string;
   endDate: string;
   operatorKey: string;
+  query: string;
 };
 
 const initialFilters: FilterState = {
   startDate: "",
   endDate: "",
   operatorKey: "all",
+  query: "",
 };
 
 const STATUS_OPTIONS: ReadonlyArray<{ value: GateStatus; label: string }> = [
@@ -42,6 +45,21 @@ export function AccessLogsPage() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  // Pagination
+  const [page, setPage] = useState(0);
+  const pageSize = 100;
+  const [hasMore, setHasMore] = useState(true);
+
+  // Debounce filter yang sering berubah
+  const debouncedQuery = useDebouncedValue(filters.query, 450);
+  const debouncedOperatorKey = useDebouncedValue(filters.operatorKey, 250);
+
+  // Abort in-flight requests
+  const abortRef = useRef<AbortController | null>(null);
+
+  // (Opsional) Cache sederhana berdasarkan key filter + page
+  // const cacheRef = useRef(new Map<string, LogEntry[]>());
 
   const uniqueOperators = useMemo(() => {
     const seen = new Set<string>();
@@ -63,13 +81,25 @@ export function AccessLogsPage() {
     return items;
   }, [logs]);
 
+  // Reset halaman saat filter berubah
+  useEffect(() => {
+    setPage(0);
+    setHasMore(true);
+  }, [filters.startDate, filters.endDate, debouncedOperatorKey, debouncedQuery]);
+
+  // Loader utama (dipanggil setiap page / filter berubah)
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setLogs([]);
       return;
     }
 
+    // Batalkan request sebelumnya
+    if (abortRef.current) abortRef.current.abort();
+    abortRef.current = new AbortController();
+
     let isActive = true;
+
     const loadLogs = async () => {
       setIsLoading(true);
       setError(null);
@@ -78,51 +108,76 @@ export function AccessLogsPage() {
         let query = supabase
           .from("ktp_submissions")
           .select(
-            "id, created_at, nama, nik, gate_status, operator_notes, created_by, created_by_email, created_by_name"
+            "id, created_at, nama, nik, gate_status, operator_notes, created_by, created_by_email, created_by_name",
+            { count: "exact", head: false }
           )
-          .order("created_at", { ascending: false })
-          .limit(500);
+          .order("created_at", { ascending: false });
 
+        // Range pagination
+        const from = page * pageSize;
+        const to = from + pageSize - 1;
+        query = query.range(from, to);
+
+        // Filter tanggal
         if (filters.startDate) {
-          const start = new Date(filters.startDate);
+          const start = new Date(filters.startDate + "T00:00:00");
           query = query.gte("created_at", start.toISOString());
         }
-
         if (filters.endDate) {
-          const end = new Date(filters.endDate);
+          const end = new Date(filters.endDate + "T00:00:00");
           end.setDate(end.getDate() + 1);
           query = query.lt("created_at", end.toISOString());
         }
 
-        if (filters.operatorKey !== "all") {
-          const [column, value] = filters.operatorKey.split(":");
-          if (column === "id") {
-            query = query.eq("created_by", value);
-          } else if (column === "email") {
-            query = query.eq("created_by_email", value);
-          }
+        // Filter operator
+        if (debouncedOperatorKey !== "all") {
+          const [column, value] = debouncedOperatorKey.split(":");
+          if (column === "id") query = query.eq("created_by", value);
+          else if (column === "email") query = query.eq("created_by_email", value);
         }
 
-        const { data, error: supabaseError } = await query;
-
-        if (supabaseError) {
-          throw new Error(supabaseError.message);
+        // Filter keyword nama (debounced)
+        if (debouncedQuery.trim()) {
+          query = query.ilike("nama", `%${debouncedQuery.trim()}%`);
         }
 
-        if (isActive) {
-          setLogs(data ?? []);
-        }
-      } catch (fetchError: any) {
-        console.error("Gagal memuat log gerbang:", fetchError);
-        if (isActive) {
-          setError(
-            fetchError?.message || "Terjadi kesalahan saat memuat data log."
-          );
-        }
+        // // (Opsional) Cache
+        // const cacheKey = JSON.stringify({
+        //   s: filters.startDate,
+        //   e: filters.endDate,
+        //   ok: debouncedOperatorKey,
+        //   q: debouncedQuery,
+        //   p: page,
+        // });
+        // if (cacheRef.current.has(cacheKey)) {
+        //   if (!isActive) return;
+        //   const cached = cacheRef.current.get(cacheKey)!;
+        //   setLogs((prev) => (page === 0 ? cached : prev));
+        //   setIsLoading(false);
+        //   setHasMore(cached.length === pageSize);
+        //   return;
+        // }
+
+        const { data, error: supabaseError } = await query.abortSignal(
+          abortRef.current!.signal
+        );
+
+        if (supabaseError) throw new Error(supabaseError.message);
+
+        if (!isActive) return;
+
+        // Page 0: replace; page > 0: append
+        setLogs((prev) => (page === 0 ? (data ?? []) : [...prev, ...(data ?? [])]));
+        setHasMore((data?.length ?? 0) === pageSize);
+
+        // // cache
+        // cacheRef.current.set(cacheKey, data ?? []);
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        console.error("Gagal memuat log gerbang:", e);
+        if (isActive) setError(e?.message || "Terjadi kesalahan saat memuat data log.");
       } finally {
-        if (isActive) {
-          setIsLoading(false);
-        }
+        if (isActive) setIsLoading(false);
       }
     };
 
@@ -130,8 +185,16 @@ export function AccessLogsPage() {
 
     return () => {
       isActive = false;
+      abortRef.current?.abort();
     };
-  }, [filters, isSupabaseConfigured]);
+  }, [
+    isSupabaseConfigured,
+    filters.startDate,
+    filters.endDate,
+    debouncedOperatorKey,
+    debouncedQuery,
+    page,
+  ]);
 
   const updateFilter = useCallback(
     <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
@@ -163,9 +226,7 @@ export function AccessLogsPage() {
           .update({ gate_status: nextStatus })
           .eq("id", entry.id);
 
-        if (updateError) {
-          throw new Error(updateError.message);
-        }
+        if (updateError) throw new Error(updateError.message);
 
         setLogs((prev) =>
           prev.map((item) =>
@@ -214,7 +275,19 @@ export function AccessLogsPage() {
 
       {isSupabaseConfigured && (
         <>
-          <section className="mt-8 grid gap-4 rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur md:grid-cols-3 md:gap-6">
+          <section className="mt-8 grid gap-4 rounded-3xl border border-slate-200/80 bg-white/90 p-5 shadow-sm shadow-slate-200/70 backdrop-blur md:grid-cols-4 md:gap-6">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Cari tamu
+              </label>
+              <input
+                type="search"
+                placeholder="Masukkan nama tamu"
+                value={filters.query}
+                onChange={(e) => updateFilter("query", e.currentTarget.value ?? "")}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+              />
+            </div>
             <div className="space-y-2">
               <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
                 Dari tanggal
@@ -222,9 +295,7 @@ export function AccessLogsPage() {
               <input
                 type="date"
                 value={filters.startDate}
-                onChange={(event) =>
-                  updateFilter("startDate", event.currentTarget?.value ?? "")
-                }
+                onChange={(e) => updateFilter("startDate", e.currentTarget.value ?? "")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -235,9 +306,7 @@ export function AccessLogsPage() {
               <input
                 type="date"
                 value={filters.endDate}
-                onChange={(event) =>
-                  updateFilter("endDate", event.currentTarget?.value ?? "")
-                }
+                onChange={(e) => updateFilter("endDate", e.currentTarget.value ?? "")}
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -247,11 +316,8 @@ export function AccessLogsPage() {
               </label>
               <select
                 value={filters.operatorKey}
-                onChange={(event) =>
-                  updateFilter(
-                    "operatorKey",
-                    event.currentTarget?.value ?? "all"
-                  )
+                onChange={(e) =>
+                  updateFilter("operatorKey", e.currentTarget.value ?? "all")
                 }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               >
@@ -314,107 +380,127 @@ export function AccessLogsPage() {
             )}
 
             {!isLoading && !error && logs.length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-sm">
-                  <thead>
-                    <tr className="text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      <th className="px-3 py-3">Waktu</th>
-                      <th className="px-3 py-3">Nama</th>
-                      <th className="px-3 py-3">NIK</th>
-                      <th className="px-3 py-3">Status Gerbang</th>
-                      <th className="px-3 py-3">Petugas</th>
-                      <th className="px-3 py-3">Catatan</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-slate-600">
-                    {logs.map((entry) => {
-                      const formattedDate = format(
-                        new Date(entry.created_at),
-                        "dd MMM yyyy HH:mm",
-                        {
-                          locale: idLocale,
-                        }
-                      );
-                      const operatorLabel =
-                        entry.created_by_name ||
-                        entry.created_by_email ||
-                        "Tidak diketahui";
-                      const gateStatusLabel =
-                        entry.gate_status === "keluar"
-                          ? "Keluar"
-                          : entry.gate_status === "masuk"
-                          ? "Masuk"
-                          : entry.gate_status === "stay"
-                          ? "Tinggal sementara"
-                          : "Belum ditetapkan";
-                      return (
-                        <tr key={entry.id} className="align-top">
-                          <td className="px-3 py-4 font-semibold text-slate-700">
-                            {formattedDate}
-                          </td>
-                          <td className="px-3 py-4">
-                            <p className="font-semibold text-slate-800">
-                              {entry.nama || "-"}
-                            </p>
-                          </td>
-                          <td className="px-3 py-4 font-mono text-xs font-medium text-slate-500">
-                            {entry.nik || "-"}
-                          </td>
-                          <td className="px-3 py-4">
-                            <div className="flex flex-col gap-2">
-                              <span
-                                className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-                                  entry.gate_status === "masuk"
-                                    ? "bg-emerald-100 text-emerald-600"
-                                    : entry.gate_status === "keluar"
-                                    ? "bg-sky-100 text-sky-600"
-                                    : entry.gate_status === "stay"
-                                    ? "bg-amber-100 text-amber-600"
-                                    : "bg-slate-100 text-slate-500"
-                                }`}
-                              >
-                                {gateStatusLabel}
-                              </span>
-                              <select
-                                value={entry.gate_status ?? ""}
-                                onChange={(event) => {
-                                  const nextValue = event.currentTarget.value as GateStatus | "";
-                                  if (!nextValue) return;
-                                  void handleStatusUpdate(entry, nextValue as GateStatus);
-                                }}
-                                disabled={updatingId === entry.id}
-                                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {!entry.gate_status && <option value="">Pilih status</option>}
-                                {STATUS_OPTIONS.map((option) => (
-                                  <option key={option.value} value={option.value}>
-                                    {option.label}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          </td>
-                          <td className="px-3 py-4">
-                            <div className="space-y-1">
-                              <p className="text-sm font-semibold text-slate-700">
-                                {operatorLabel}
+              <>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-sm">
+                    <thead>
+                      <tr className="text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                        <th className="px-3 py-3">Waktu</th>
+                        <th className="px-3 py-3">Nama</th>
+                        <th className="px-3 py-3">NIK</th>
+                        <th className="px-3 py-3">Status Gerbang</th>
+                        <th className="px-3 py-3">Petugas</th>
+                        <th className="px-3 py-3">Catatan</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-slate-600">
+                      {logs.map((entry) => {
+                        const formattedDate = format(
+                          new Date(entry.created_at),
+                          "dd MMM yyyy HH:mm",
+                          { locale: idLocale }
+                        );
+                        const operatorLabel =
+                          entry.created_by_name ||
+                          entry.created_by_email ||
+                          "Tidak diketahui";
+                        const gateStatusLabel =
+                          entry.gate_status === "keluar"
+                            ? "Keluar"
+                            : entry.gate_status === "masuk"
+                            ? "Masuk"
+                            : entry.gate_status === "stay"
+                            ? "Tinggal sementara"
+                            : "Belum ditetapkan";
+
+                        return (
+                          <tr key={entry.id} className="align-top">
+                            <td className="px-3 py-4 font-semibold text-slate-700">
+                              {formattedDate}
+                            </td>
+                            <td className="px-3 py-4">
+                              <p className="font-semibold text-slate-800">
+                                {entry.nama || "-"}
                               </p>
-                              {entry.created_by_email && (
-                                <p className="text-xs font-medium text-slate-400">
-                                  {entry.created_by_email}
+                            </td>
+                            <td className="px-3 py-4 font-mono text-xs font-medium text-slate-500">
+                              {entry.nik || "-"}
+                            </td>
+                            <td className="px-3 py-4">
+                              <div className="flex flex-col gap-2">
+                                <span
+                                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                                    entry.gate_status === "masuk"
+                                      ? "bg-emerald-100 text-emerald-600"
+                                      : entry.gate_status === "keluar"
+                                      ? "bg-sky-100 text-sky-600"
+                                      : entry.gate_status === "stay"
+                                      ? "bg-amber-100 text-amber-600"
+                                      : "bg-slate-100 text-slate-500"
+                                  }`}
+                                >
+                                  {gateStatusLabel}
+                                </span>
+                                <select
+                                  value={entry.gate_status ?? ""}
+                                  onChange={(e) => {
+                                    const nextValue = e.currentTarget.value as
+                                      | GateStatus
+                                      | "";
+                                    if (!nextValue) return;
+                                    void handleStatusUpdate(
+                                      entry,
+                                      nextValue as GateStatus
+                                    );
+                                  }}
+                                  disabled={updatingId === entry.id}
+                                  className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {!entry.gate_status && (
+                                    <option value="">Pilih status</option>
+                                  )}
+                                  {STATUS_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </td>
+                            <td className="px-3 py-4">
+                              <div className="space-y-1">
+                                <p className="text-sm font-semibold text-slate-700">
+                                  {operatorLabel}
                                 </p>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-4 text-xs font-medium text-slate-500">
-                            {entry.operator_notes || "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                                {entry.created_by_email && (
+                                  <p className="text-xs font-medium text-slate-400">
+                                    {entry.created_by_email}
+                                  </p>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-4 text-xs font-medium text-slate-500">
+                              {entry.operator_notes || "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {hasMore && (
+                  <div className="mt-4 flex justify-center">
+                    <button
+                      onClick={() => setPage((p) => p + 1)}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 active:scale-[0.99]"
+                      disabled={isLoading}
+                    >
+                      Muat lebih banyak
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </section>
         </>
@@ -422,4 +508,3 @@ export function AccessLogsPage() {
     </div>
   );
 }
-

@@ -1,8 +1,16 @@
 type ScannerHeaderProps = {
   userInitials: string;
+  userName?: string | null;
+  userEmail?: string | null;
+  onSignOut?: () => void;
 };
 
-export function ScannerHeader({ userInitials }: ScannerHeaderProps) {
+export function ScannerHeader({
+  userInitials,
+  userName,
+  userEmail,
+  onSignOut,
+}: ScannerHeaderProps) {
   return (
     <header className="flex items-center justify-between">
       <button
@@ -22,6 +30,14 @@ export function ScannerHeader({ userInitials }: ScannerHeaderProps) {
         </svg>
       </button>
       <div className="flex items-center gap-3">
+        <div className="hidden text-right text-xs sm:flex sm:flex-col">
+          <span className="font-semibold text-slate-800">
+            {userName || userEmail || "Pengguna"}
+          </span>
+          {userEmail && (
+            <span className="font-medium text-slate-400">{userEmail}</span>
+          )}
+        </div>
         <button
           type="button"
           className="relative flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm shadow-slate-200/60"
@@ -39,9 +55,21 @@ export function ScannerHeader({ userInitials }: ScannerHeaderProps) {
           </svg>
           <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-rose-500" />
         </button>
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-slate-900 to-slate-700 text-sm font-semibold text-white">
+        <div
+          className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-slate-900 to-slate-700 text-sm font-semibold text-white"
+          aria-hidden="true"
+        >
           {userInitials}
         </div>
+        {onSignOut && (
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px"
+          >
+            Keluar
+          </button>
+        )}
       </div>
     </header>
   );

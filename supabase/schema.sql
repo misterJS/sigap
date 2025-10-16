@@ -20,6 +20,7 @@ create table if not exists public.ktp_submissions (
   operator_notes text,
   raw_ocr_text text,
   ocr_language text,
+  created_by uuid references auth.users (id),
 
   constraint nik_length check (char_length(nik) <= 32)
 );

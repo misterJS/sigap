@@ -48,8 +48,8 @@ export function OcrResultForm({
 
   const saveFeedbackClass = (() => {
     if (!saveFeedback) return "";
-    if (saveFeedback.startsWith("�o.")) return "text-emerald-600";
-    if (saveFeedback.startsWith("�s��,?")) return "text-amber-600";
+    if (saveFeedback.startsWith("Berhasil")) return "text-emerald-600";
+    if (saveFeedback.startsWith("Perhatian")) return "text-amber-600";
     return "text-rose-600";
   })();
 
@@ -72,7 +72,7 @@ export function OcrResultForm({
           }`}
         >
           {ktpData
-            ? `Terbaca${ocrLanguage ? ` A� ${ocrLanguage.toUpperCase()}` : ""}`
+            ? `Terbaca${ocrLanguage ? ` oleh ${ocrLanguage.toUpperCase()}` : ""}`
             : "Menunggu"}
         </span>
       </div>
@@ -161,7 +161,7 @@ export function OcrResultForm({
           )}
           {!isSupabaseConfigured && (
             <p className="text-center text-xs text-rose-500">
-              *Supabase belum dikonfigurasi, data hanya tersimpan ke console.
+              *Supabase belum dikonfigurasi, data hanya tersimpan di console.
             </p>
           )}
         </div>

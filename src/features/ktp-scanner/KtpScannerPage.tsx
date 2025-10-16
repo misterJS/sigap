@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useAuth } from "../auth/AuthContext";
 import { supabase, isSupabaseConfigured } from "../../lib/supabaseClient";
 import { fieldDefinitions } from "./constants";
 import { parseKtpData } from "./parser";
@@ -21,8 +22,46 @@ import { OcrResultForm } from "./components/OcrResultForm";
 import { TipsSection } from "./components/TipsSection";
 import type { GateStatus } from "./components/GateStatusToggle";
 
+const deriveUserInitials = (name?: string | null, email?: string | null) => {
+  const cleanedName = name?.trim();
+  if (cleanedName) {
+    const parts = cleanedName.split(/\s+/).filter(Boolean);
+    if (parts.length > 0) {
+      const initials = parts
+        .slice(0, 2)
+        .map((part) => part.charAt(0).toUpperCase())
+        .join("");
+      if (initials) {
+        return initials;
+      }
+    }
+  }
+
+  const cleanedEmail = email?.trim().toUpperCase();
+  if (cleanedEmail) {
+    const alphanumeric = cleanedEmail.replace(/[^A-Z0-9]/g, "");
+    if (alphanumeric) {
+      return alphanumeric.slice(0, 2);
+    }
+  }
+
+  return "SG";
+};
+
 /* eslint-disable */
 export function KtpScannerPage() {
+  const { user, signOut } = useAuth();
+  const userMetadata = user?.user_metadata ?? {};
+  const userName =
+    (userMetadata.fullName as string | undefined) ??
+    (userMetadata.full_name as string | undefined) ??
+    (userMetadata.name as string | undefined) ??
+    null;
+  const userEmail =
+    (typeof userMetadata.email === "string" && userMetadata.email) || user?.email || null;
+  const userInitials = deriveUserInitials(userName, userEmail);
+  const createdById = user?.id ?? null;
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [ktpData, setKtpData] = useState<KtpData | null>(null);
@@ -283,6 +322,7 @@ export function KtpScannerPage() {
           raw_ocr_text: rawOcrText,
           ocr_language: ocrLanguage,
           gate_status: gateStatus,
+          created_by: createdById,
         };
 
         const { error } = await supabase
@@ -293,13 +333,11 @@ export function KtpScannerPage() {
           throw new Error(error.message);
         }
 
-        setSaveFeedback("�o. Data KTP berhasil disimpan ke Supabase.");
+        setSaveFeedback("Berhasil: Data KTP tersimpan di Supabase.");
         setLastSavedAt(formattedDate);
         console.info("Data berhasil disimpan ke Supabase:", dataToSave);
       } else {
-        setSaveFeedback(
-          "�s��,? Supabase tidak dikonfigurasi. Data tersimpan sebagai draft lokal di console."
-        );
+        setSaveFeedback("Perhatian: Supabase tidak dikonfigurasi. Data disimpan sebagai draft lokal di console.");
         setLastSavedAt(formattedDate);
         console.table({
           ...formData,
@@ -308,13 +346,12 @@ export function KtpScannerPage() {
           ocr: rawOcrText,
           is_draft: true,
           gate_status: gateStatus,
+          created_by: createdById,
         });
       }
     } catch (error: any) {
       console.error("Gagal menyimpan data:", error);
-      setSaveFeedback(
-        `�?O Gagal menyimpan data: ${error.message || "Kesalahan tak terduga"}`
-      );
+      setSaveFeedback(`Gagal: ${error.message || "Terjadi kesalahan tak terduga saat menyimpan data."}`);
     } finally {
       setIsSaving(false);
     }
@@ -395,9 +432,17 @@ export function KtpScannerPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f7f9ff] via-white to-[#d7ecff] text-slate-900">
       <main className="mx-auto flex min-h-screen w-full max-w-lg flex-col px-5 pb-24 pt-6">
-        <ScannerHeader userInitials="IK" />
+        <ScannerHeader
+          userInitials={userInitials}
+          userName={userName}
+          userEmail={userEmail}
+          onSignOut={() => {
+            void signOut();
+          }}
+        />
         <WelcomeSection
           onPrimaryAction={openCamera}
+          userName={userName}
           secondaryActions={secondaryActions}
         />
         <section className="mt-8 space-y-6">
@@ -449,3 +494,7 @@ export function KtpScannerPage() {
     </div>
   );
 }
+
+
+
+

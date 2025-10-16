@@ -2,17 +2,19 @@ import type { SecondaryAction } from "../types";
 
 type WelcomeSectionProps = {
   onPrimaryAction: () => void;
+  userName?: string | null;
   secondaryActions: SecondaryAction[];
 };
 
 export function WelcomeSection({
   onPrimaryAction,
   secondaryActions,
+  userName,
 }: WelcomeSectionProps) {
   return (
     <section className="mt-9 space-y-6">
       <div className="space-y-1">
-        <p className="text-sm font-medium text-slate-400">Hi, Pak security</p>
+        <p className="text-sm font-medium text-slate-400">Hi, Pak {userName}</p>
         <h1 className="text-3xl font-semibold leading-tight">
           Siap berjaga hari ini?
         </h1>

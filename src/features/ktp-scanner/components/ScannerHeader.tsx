@@ -12,23 +12,7 @@ export function ScannerHeader({
   onSignOut,
 }: ScannerHeaderProps) {
   return (
-    <header className="flex items-center justify-between">
-      <button
-        type="button"
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm shadow-slate-200/60"
-        aria-label="Buka menu"
-      >
-        <svg
-          className="h-5 w-5 text-slate-600"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        >
-          <path d="M5 7h14M5 12h14M5 17h14" />
-        </svg>
-      </button>
+    <header className="flex items-center justify-end">
       <div className="flex items-center gap-3">
         <div className="hidden text-right text-xs sm:flex sm:flex-col">
           <span className="font-semibold text-slate-800">

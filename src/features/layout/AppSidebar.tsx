@@ -1,7 +1,13 @@
 import { useMemo } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { extractUserIdentity } from "../auth/userMetadata";
-import { APP_ROUTE_LABEL, type AppRoute } from "./routes";
+import {
+  APP_ROUTE_DESCRIPTION,
+  APP_ROUTE_ICONS,
+  APP_ROUTE_LABEL,
+  APP_ROUTES,
+  type AppRoute,
+} from "./routes";
 
 type SidebarProps = {
   activeRoute: AppRoute;
@@ -9,53 +15,12 @@ type SidebarProps = {
   onSignOut: () => void;
 };
 
-const navItems: Array<{
-  key: AppRoute;
-  label: string;
-  description: string;
-  icon: JSX.Element;
-}> = [
-  {
-    key: "scanner",
-    label: APP_ROUTE_LABEL.scanner,
-    description: "Ambil foto dan simpan data pendatang",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <rect x="4" y="5" width="16" height="14" rx="3" />
-        <circle cx="12" cy="12" r="3" />
-        <path d="M9.5 5.5V3M14.5 5.5V3M4 9.5H2M22 9.5h-2" />
-      </svg>
-    ),
-  },
-  {
-    key: "logs",
-    label: APP_ROUTE_LABEL.logs,
-    description: "Pantau keluar-masuk berdasarkan petugas",
-    icon: (
-      <svg
-        className="h-5 w-5"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M5 12h14" />
-        <path d="M12 5v14" />
-        <rect x="3" y="3" width="18" height="18" rx="4" />
-      </svg>
-    ),
-  },
-];
+const navItems = APP_ROUTES.map((route) => ({
+  key: route,
+  label: APP_ROUTE_LABEL[route],
+  description: APP_ROUTE_DESCRIPTION[route],
+  Icon: APP_ROUTE_ICONS[route],
+}));
 
 export function AppSidebar({ activeRoute, onNavigate, onSignOut }: SidebarProps) {
   const { user } = useAuth();
@@ -84,6 +49,7 @@ export function AppSidebar({ activeRoute, onNavigate, onSignOut }: SidebarProps)
         <nav className="space-y-2">
           {navItems.map((item) => {
             const isActive = item.key === activeRoute;
+            const Icon = item.Icon;
             return (
               <button
                 key={item.key}
@@ -101,7 +67,7 @@ export function AppSidebar({ activeRoute, onNavigate, onSignOut }: SidebarProps)
                       isActive ? "bg-white/10 text-white" : "bg-slate-100 text-slate-500"
                     }`}
                   >
-                    {item.icon}
+                    <Icon />
                   </span>
                   <div>
                     <p className="text-sm font-semibold">{item.label}</p>

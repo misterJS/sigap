@@ -44,11 +44,22 @@ for each row execute function public.set_updated_at();
 
 alter table public.ktp_submissions enable row level security;
 
--- Example policy: allow service role full access; enable authenticated insert if needed.
--- Uncomment and adjust policies according to your security model.
--- create policy "Allow service role full access"
---   on public.ktp_submissions
---   for all
---   using (auth.role() = 'service_role')
---   with check (auth.role() = 'service_role');
+create policy "Allow authenticated read ktp submissions"
+  on public.ktp_submissions
+  for select
+  using (auth.role() = 'authenticated');
+
+create policy "Allow authenticated insert ktp submissions"
+  on public.ktp_submissions
+  for insert
+  with check (
+    auth.role() = 'authenticated'
+    and (created_by is null or created_by = auth.uid())
+  );
+
+create policy "Allow authenticated update own ktp submissions"
+  on public.ktp_submissions
+  for update
+  using (auth.role() = 'authenticated' and created_by = auth.uid())
+  with check (created_by = auth.uid());
 

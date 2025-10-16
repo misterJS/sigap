@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { id as idLocale } from "date-fns/locale/id";
 import { supabase, isSupabaseConfigured } from "../../lib/supabaseClient";
@@ -105,7 +105,9 @@ export function AccessLogsPage() {
       } catch (fetchError: any) {
         console.error("Gagal memuat log gerbang:", fetchError);
         if (isActive) {
-          setError(fetchError?.message || "Terjadi kesalahan saat memuat data log.");
+          setError(
+            fetchError?.message || "Terjadi kesalahan saat memuat data log."
+          );
         }
       } finally {
         if (isActive) {
@@ -121,9 +123,18 @@ export function AccessLogsPage() {
     };
   }, [filters, isSupabaseConfigured]);
 
-  const handleFilterChange =
-    (field: "startDate" | "endDate") => (event: ChangeEvent<HTMLInputElement>) =>
-      setFilters((prev) => ({ ...prev, [field]: event.currentTarget.value }));
+  const updateFilter = useCallback(
+    <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
+      setFilters((prev) => ({ ...prev, [key]: value }));
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (isSupabaseConfigured && logs.length === 0 && !isLoading && !error) {
+      updateFilter("operatorKey", "all");
+    }
+  }, [isSupabaseConfigured, logs.length, isLoading, error, updateFilter]);
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col px-6 pb-16 pt-8 text-slate-900 lg:px-12">
@@ -135,8 +146,8 @@ export function AccessLogsPage() {
           Riwayat keluar-masuk pengunjung
         </h1>
         <p className="text-sm text-slate-500">
-          Lihat catatan penjagaan berdasarkan petugas yang melakukan input. Gunakan filter untuk
-          memeriksa rentang tanggal atau operator tertentu.
+          Lihat catatan penjagaan berdasarkan petugas yang melakukan input.
+          Gunakan filter untuk memeriksa rentang tanggal atau operator tertentu.
         </p>
       </header>
 
@@ -154,9 +165,12 @@ export function AccessLogsPage() {
                 Dari tanggal
               </label>
               <input
+                disabled
                 type="date"
                 value={filters.startDate}
-                onChange={handleFilterChange("startDate")}
+                onChange={(event) =>
+                  updateFilter("startDate", event.currentTarget?.value ?? "")
+                }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -166,8 +180,11 @@ export function AccessLogsPage() {
               </label>
               <input
                 type="date"
+                disabled
                 value={filters.endDate}
-                onChange={handleFilterChange("endDate")}
+                onChange={(event) =>
+                  updateFilter("endDate", event.currentTarget?.value ?? "")
+                }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -178,7 +195,10 @@ export function AccessLogsPage() {
               <select
                 value={filters.operatorKey}
                 onChange={(event) =>
-                  setFilters((prev) => ({ ...prev, operatorKey: event.currentTarget.value }))
+                  updateFilter(
+                    "operatorKey",
+                    event.currentTarget?.value ?? "all"
+                  )
                 }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               >
@@ -195,7 +215,9 @@ export function AccessLogsPage() {
           <section className="mt-6 rounded-3xl border border-slate-200/80 bg-white/95 p-6 shadow-lg shadow-slate-900/10 backdrop-blur">
             {isLoading && (
               <div className="flex items-center justify-center py-12">
-                <div className="text-sm font-medium text-slate-500">Memuat data log...</div>
+                <div className="text-sm font-medium text-slate-500">
+                  Memuat data log...
+                </div>
               </div>
             )}
 
@@ -243,10 +265,17 @@ export function AccessLogsPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-slate-600">
                     {logs.map((entry) => {
-                      const formattedDate = format(new Date(entry.created_at), "dd MMM yyyy HH:mm", {
-                        locale: idLocale,
-                      });
-                      const operatorLabel = entry.created_by_name || entry.created_by_email || "Tidak diketahui";
+                      const formattedDate = format(
+                        new Date(entry.created_at),
+                        "dd MMM yyyy HH:mm",
+                        {
+                          locale: idLocale,
+                        }
+                      );
+                      const operatorLabel =
+                        entry.created_by_name ||
+                        entry.created_by_email ||
+                        "Tidak diketahui";
                       const gateStatus =
                         entry.gate_status === "keluar"
                           ? "Keluar"
@@ -255,9 +284,13 @@ export function AccessLogsPage() {
                           : "Tidak ada";
                       return (
                         <tr key={entry.id} className="align-top">
-                          <td className="px-3 py-4 font-semibold text-slate-700">{formattedDate}</td>
+                          <td className="px-3 py-4 font-semibold text-slate-700">
+                            {formattedDate}
+                          </td>
                           <td className="px-3 py-4">
-                            <p className="font-semibold text-slate-800">{entry.nama || "-"}</p>
+                            <p className="font-semibold text-slate-800">
+                              {entry.nama || "-"}
+                            </p>
                           </td>
                           <td className="px-3 py-4 font-mono text-xs font-medium text-slate-500">
                             {entry.nik || "-"}
@@ -277,9 +310,13 @@ export function AccessLogsPage() {
                           </td>
                           <td className="px-3 py-4">
                             <div className="space-y-1">
-                              <p className="text-sm font-semibold text-slate-700">{operatorLabel}</p>
+                              <p className="text-sm font-semibold text-slate-700">
+                                {operatorLabel}
+                              </p>
                               {entry.created_by_email && (
-                                <p className="text-xs font-medium text-slate-400">{entry.created_by_email}</p>
+                                <p className="text-xs font-medium text-slate-400">
+                                  {entry.created_by_email}
+                                </p>
                               )}
                             </div>
                           </td>

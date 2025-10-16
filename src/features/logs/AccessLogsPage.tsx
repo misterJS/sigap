@@ -8,6 +8,7 @@ import { useDebouncedValue } from "../../hooks/useDebounceValue";
 type LogEntry = {
   id: string;
   created_at: string;
+  updated_at: string;
   nama: string;
   nik: string;
   gate_status: string | null;
@@ -45,6 +46,9 @@ export function AccessLogsPage() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [editingEntry, setEditingEntry] = useState<LogEntry | null>(null);
+  const [editedNotes, setEditedNotes] = useState("");
+  const [isSavingNotes, setIsSavingNotes] = useState(false);
 
   // Pagination
   const [page, setPage] = useState(0);
@@ -85,7 +89,12 @@ export function AccessLogsPage() {
   useEffect(() => {
     setPage(0);
     setHasMore(true);
-  }, [filters.startDate, filters.endDate, debouncedOperatorKey, debouncedQuery]);
+  }, [
+    filters.startDate,
+    filters.endDate,
+    debouncedOperatorKey,
+    debouncedQuery,
+  ]);
 
   // Loader utama (dipanggil setiap page / filter berubah)
   useEffect(() => {
@@ -108,7 +117,7 @@ export function AccessLogsPage() {
         let query = supabase
           .from("ktp_submissions")
           .select(
-            "id, created_at, nama, nik, gate_status, operator_notes, created_by, created_by_email, created_by_name",
+            "id, created_at, updated_at, nama, nik, gate_status, operator_notes, created_by, created_by_email, created_by_name",
             { count: "exact", head: false }
           )
           .order("created_at", { ascending: false });
@@ -133,7 +142,8 @@ export function AccessLogsPage() {
         if (debouncedOperatorKey !== "all") {
           const [column, value] = debouncedOperatorKey.split(":");
           if (column === "id") query = query.eq("created_by", value);
-          else if (column === "email") query = query.eq("created_by_email", value);
+          else if (column === "email")
+            query = query.eq("created_by_email", value);
         }
 
         // Filter keyword nama (debounced)
@@ -167,7 +177,9 @@ export function AccessLogsPage() {
         if (!isActive) return;
 
         // Page 0: replace; page > 0: append
-        setLogs((prev) => (page === 0 ? (data ?? []) : [...prev, ...(data ?? [])]));
+        setLogs((prev) =>
+          page === 0 ? data ?? [] : [...prev, ...(data ?? [])]
+        );
         setHasMore((data?.length ?? 0) === pageSize);
 
         // // cache
@@ -175,7 +187,8 @@ export function AccessLogsPage() {
       } catch (e: any) {
         if (e?.name === "AbortError") return;
         console.error("Gagal memuat log gerbang:", e);
-        if (isActive) setError(e?.message || "Terjadi kesalahan saat memuat data log.");
+        if (isActive)
+          setError(e?.message || "Terjadi kesalahan saat memuat data log.");
       } finally {
         if (isActive) setIsLoading(false);
       }
@@ -228,9 +241,12 @@ export function AccessLogsPage() {
 
         if (updateError) throw new Error(updateError.message);
 
+        const nowIso = new Date().toISOString();
         setLogs((prev) =>
           prev.map((item) =>
-            item.id === entry.id ? { ...item, gate_status: nextStatus } : item
+            item.id === entry.id
+              ? { ...item, gate_status: nextStatus, updated_at: nowIso }
+              : item
           )
         );
         setUpdateMessage("Status gerbang berhasil diperbarui.");
@@ -245,6 +261,61 @@ export function AccessLogsPage() {
     },
     [isSupabaseConfigured]
   );
+
+  const openNotesEditor = useCallback((entry: LogEntry) => {
+    setEditingEntry(entry);
+    setEditedNotes(entry.operator_notes ?? "");
+    setMutationError(null);
+    setUpdateMessage(null);
+  }, []);
+
+  const closeNotesEditor = useCallback(() => {
+    setEditingEntry(null);
+    setEditedNotes("");
+  }, []);
+
+  const handleNotesSave = useCallback(async () => {
+    if (!editingEntry) return;
+
+    if (!isSupabaseConfigured) {
+      setMutationError(
+        "Supabase belum dikonfigurasi. Tambahkan kredensial di .env untuk memperbarui catatan."
+      );
+      return;
+    }
+
+    setIsSavingNotes(true);
+    setMutationError(null);
+
+    const preparedNotes = editedNotes.trim();
+    const payloadNotes = preparedNotes.length > 0 ? preparedNotes : null;
+
+    try {
+      const { error: updateError } = await supabase
+        .from("ktp_submissions")
+        .update({ operator_notes: payloadNotes })
+        .eq("id", editingEntry.id);
+
+      if (updateError) throw new Error(updateError.message);
+
+      const nowIso = new Date().toISOString();
+      setLogs((prev) =>
+        prev.map((item) =>
+          item.id === editingEntry.id
+            ? { ...item, operator_notes: payloadNotes, updated_at: nowIso }
+            : item
+        )
+      );
+
+      setUpdateMessage("Catatan petugas berhasil diperbarui.");
+      closeNotesEditor();
+    } catch (err: any) {
+      console.error("Gagal memperbarui catatan:", err);
+      setMutationError(err?.message || "Tidak dapat memperbarui catatan.");
+    } finally {
+      setIsSavingNotes(false);
+    }
+  }, [closeNotesEditor, editedNotes, editingEntry, isSupabaseConfigured]);
 
   useEffect(() => {
     if (!updateMessage) return;
@@ -284,7 +355,9 @@ export function AccessLogsPage() {
                 type="search"
                 placeholder="Masukkan nama tamu"
                 value={filters.query}
-                onChange={(e) => updateFilter("query", e.currentTarget.value ?? "")}
+                onChange={(e) =>
+                  updateFilter("query", e.currentTarget.value ?? "")
+                }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -295,7 +368,9 @@ export function AccessLogsPage() {
               <input
                 type="date"
                 value={filters.startDate}
-                onChange={(e) => updateFilter("startDate", e.currentTarget.value ?? "")}
+                onChange={(e) =>
+                  updateFilter("startDate", e.currentTarget.value ?? "")
+                }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -306,7 +381,9 @@ export function AccessLogsPage() {
               <input
                 type="date"
                 value={filters.endDate}
-                onChange={(e) => updateFilter("endDate", e.currentTarget.value ?? "")}
+                onChange={(e) =>
+                  updateFilter("endDate", e.currentTarget.value ?? "")
+                }
                 className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
@@ -385,21 +462,39 @@ export function AccessLogsPage() {
                   <table className="min-w-full divide-y divide-slate-200 text-sm">
                     <thead>
                       <tr className="text-left text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                        <th className="px-3 py-3">Waktu</th>
-                        <th className="px-3 py-3">Nama</th>
-                        <th className="px-3 py-3">NIK</th>
                         <th className="px-3 py-3">Status Gerbang</th>
+                        <th className="px-3 py-3">Nama</th>
+                        <th className="px-3 py-3">Masuk</th>
+                        <th className="px-3 py-3">Keluar</th>
+                        <th className="px-3 py-3">NIK</th>
                         <th className="px-3 py-3">Petugas</th>
                         <th className="px-3 py-3">Catatan</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-600">
                       {logs.map((entry) => {
-                        const formattedDate = format(
-                          new Date(entry.created_at),
-                          "dd MMM yyyy HH:mm",
-                          { locale: idLocale }
-                        );
+                        const masukDate = new Date(entry.created_at);
+                        const masukText = Number.isNaN(masukDate.getTime())
+                          ? "—"
+                          : format(masukDate, "dd MMM yyyy HH:mm", {
+                              locale: idLocale,
+                            });
+
+                        let keluarText = "—";
+                        if (
+                          entry.gate_status === "keluar" &&
+                          entry.updated_at
+                        ) {
+                          const keluarDate = new Date(entry.updated_at);
+                          if (!Number.isNaN(keluarDate.getTime())) {
+                            keluarText = format(
+                              keluarDate,
+                              "dd MMM yyyy HH:mm",
+                              { locale: idLocale }
+                            );
+                          }
+                        }
+
                         const operatorLabel =
                           entry.created_by_name ||
                           entry.created_by_email ||
@@ -415,17 +510,6 @@ export function AccessLogsPage() {
 
                         return (
                           <tr key={entry.id} className="align-top">
-                            <td className="px-3 py-4 font-semibold text-slate-700">
-                              {formattedDate}
-                            </td>
-                            <td className="px-3 py-4">
-                              <p className="font-semibold text-slate-800">
-                                {entry.nama || "-"}
-                              </p>
-                            </td>
-                            <td className="px-3 py-4 font-mono text-xs font-medium text-slate-500">
-                              {entry.nik || "-"}
-                            </td>
                             <td className="px-3 py-4">
                               <div className="flex flex-col gap-2">
                                 <span
@@ -460,13 +544,32 @@ export function AccessLogsPage() {
                                     <option value="">Pilih status</option>
                                   )}
                                   {STATUS_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>
+                                    <option
+                                      key={option.value}
+                                      value={option.value}
+                                    >
                                       {option.label}
                                     </option>
                                   ))}
                                 </select>
                               </div>
                             </td>
+                            <td className="px-3 py-4">
+                              <p className="font-semibold text-slate-800">
+                                {entry.nama || "-"}
+                              </p>
+                            </td>
+                            <td className="px-3 py-4 font-semibold text-slate-700">
+                              {masukText}
+                            </td>
+                            <td className="px-3 py-4 font-semibold text-slate-600">
+                              {keluarText}
+                            </td>
+
+                            <td className="px-3 py-4 font-mono text-xs font-medium text-slate-500">
+                              {entry.nik || "-"}
+                            </td>
+
                             <td className="px-3 py-4">
                               <div className="space-y-1">
                                 <p className="text-sm font-semibold text-slate-700">
@@ -479,8 +582,20 @@ export function AccessLogsPage() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-3 py-4 text-xs font-medium text-slate-500">
-                              {entry.operator_notes || "—"}
+                            <td className="px-3 py-4 text-xs text-slate-500">
+                              <p className="whitespace-pre-wrap font-medium text-slate-600">
+                                {entry.operator_notes &&
+                                entry.operator_notes.trim().length > 0
+                                  ? entry.operator_notes
+                                  : "—"}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => openNotesEditor(entry)}
+                                className="mt-2 inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px"
+                              >
+                                Edit catatan
+                              </button>
                             </td>
                           </tr>
                         );
@@ -504,6 +619,90 @@ export function AccessLogsPage() {
             )}
           </section>
         </>
+      )}
+
+      {editingEntry && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4"
+          onClick={closeNotesEditor}
+        >
+          <div
+            className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-2xl shadow-slate-900/30"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Edit catatan petugas
+                </p>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {editingEntry.nama || "Tamu"}
+                </h2>
+                <p className="text-xs font-medium text-slate-400">
+                  NIK: {editingEntry.nik || "—"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeNotesEditor}
+                className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 transition hover:text-slate-900"
+                aria-label="Tutup"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                >
+                  <path d="M6 6l12 12M18 6l-12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form
+              className="mt-4 space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleNotesSave();
+              }}
+            >
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Catatan petugas
+                </label>
+                <textarea
+                  rows={6}
+                  value={editedNotes}
+                  onChange={(event) =>
+                    setEditedNotes(event.currentTarget.value)
+                  }
+                  placeholder="Tambahkan catatan penting terkait kunjungan ini."
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-700 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeNotesEditor}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm shadow-slate-200 transition hover:border-slate-300 hover:text-slate-900 active:translate-y-px"
+                  disabled={isSavingNotes}
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isSavingNotes}
+                >
+                  {isSavingNotes ? "Menyimpan..." : "Simpan catatan"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

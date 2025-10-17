@@ -51,8 +51,8 @@ Struktur SQL, termasuk definisi tabel log dan data referensi, tersedia di `supab
 Proyek ini belum terbuka untuk kontribusi eksternal. Jika Anda menggunakan basis kode ini sebagai acuan, mohon cantumkan atribusi kepada pemilik repositori.
 
 ## Dukung Karya Ini
-Jika aplikasi ini bermanfaat, Anda dapat memberikan dukungan melalui Saweria. Cukup scan QR berikut:
+Jika aplikasi ini bermanfaat, Anda dapat memberikan dukungan melalui Saweria. Cukup scan QR berikut atau buka tautan langsung:
 
-![Saweria QR](https://saweria.co/widgets/qr?streamKey=c225fe724bd37018534e970dee79510f)
+[![Saweria QR](./public/saweria-qr.png)](https://saweria.co/c225fe724bd37018534e970dee79510f)
 
 Terima kasih sudah menghargai karya ini!

@@ -4,6 +4,13 @@
 
 SIGAP adalah aplikasi internal berbasis React + TypeScript + Express untuk memonitor aktivitas, khususnya log akses dan pemindaian KTP, dengan integrasi Supabase sebagai backend layanan data.
 
+## Dukung Karya Ini
+Jika aplikasi ini bermanfaat, Anda dapat memberikan dukungan melalui Saweria. Cukup scan QR berikut atau buka tautan langsung:
+
+[![Saweria QR](./public/saweria-qr.png)](https://saweria.co/c225fe724bd37018534e970dee79510f)
+
+Terima kasih sudah menghargai karya ini!
+
 ## Teknologi Utama
 - React 19 + Vite 7 untuk antarmuka pengguna yang responsif.
 - Express 5 + ts-node sebagai API server lokal.
@@ -49,10 +56,3 @@ Struktur SQL, termasuk definisi tabel log dan data referensi, tersedia di `supab
 
 ## Kontribusi
 Proyek ini belum terbuka untuk kontribusi eksternal. Jika Anda menggunakan basis kode ini sebagai acuan, mohon cantumkan atribusi kepada pemilik repositori.
-
-## Dukung Karya Ini
-Jika aplikasi ini bermanfaat, Anda dapat memberikan dukungan melalui Saweria. Cukup scan QR berikut atau buka tautan langsung:
-
-[![Saweria QR](./public/saweria-qr.png)](https://saweria.co/c225fe724bd37018534e970dee79510f)
-
-Terima kasih sudah menghargai karya ini!
